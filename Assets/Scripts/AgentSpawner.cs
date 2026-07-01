@@ -69,6 +69,42 @@ public class AgentSpawner : MonoBehaviour
         return agent;
     }
 
+    /// Spawns NPC communities (communityIds 1 through count) with evenly-spaced hues
+    /// so each starts as a visually distinct lineage. Call after SpawnCommunities so
+    /// community 0 (the player) is already placed and NPC ids start at 1.
+    public void SpawnNPCCommunities(int count,
+        float visionMean, float visionStdDev,
+        float speedMean, float speedStdDev,
+        float strengthMean, float strengthStdDev,
+        float hardinessMean, float hardinessStdDev,
+        float preferenceVariance)
+    {
+        for (int c = 0; c < count; c++)
+        {
+            int communityId = c + 1; // 0 is the player
+            // Evenly-spaced hues, offset by 0.05 so they don't land on the same hue
+            // as common player starting colors (which tend toward warm tones).
+            float hue = ((float)c / count + 0.05f) % 1f;
+            Color color = Color.HSVToRGB(hue, 0.80f, 0.95f);
+
+            Vector3 origin = SphereSurface.RandomPointOnSphere(planetCenter, planetRadius);
+            float localTemp = ClimateManager.GetTemperature(origin);
+            float localMoisture = ClimateManager.GetMoisture(origin);
+
+            // One founding organism per NPC species — same model as the player's single
+            // origin cell. They'll grow through the same era/speciation system as the player.
+            float vision    = PopulationStats.SampleDimension(visionMean,    visionStdDev);
+            float speed     = PopulationStats.SampleDimension(speedMean,     speedStdDev);
+            float strength  = PopulationStats.SampleDimension(strengthMean,  strengthStdDev);
+            float hardiness = PopulationStats.SampleDimension(hardinessMean, hardinessStdDev);
+            float tempPref  = PopulationStats.SampleDimension(localTemp,     preferenceVariance);
+            float moistPref = PopulationStats.SampleDimension(localMoisture, preferenceVariance);
+
+            Vector3 position = SphereSurface.ProjectToSurface(origin, planetCenter, planetRadius);
+            SpawnAgent(vision, speed, strength, hardiness, tempPref, moistPref, position, communityId, color);
+        }
+    }
+
     public void Unregister(AgentController agent)
     {
         ActiveAgents.Remove(agent);

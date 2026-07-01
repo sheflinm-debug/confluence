@@ -68,6 +68,12 @@ public class FluidDynamicsManager : MonoBehaviour
     private Vector3 _planetCenter;
     private TidalForceManager _tidal;
 
+    /// The liquid's current vertex color (temperature-evaluated). StormVisualManager reads
+    /// this to tint rain particles so they match the fluid on the ground.
+    public Color CurrentLiquidColor => _liquid != null && _getLiquidTempK != null
+        ? _liquid.ColorAt(_getLiquidTempK())
+        : new Color(0.06f, 0.22f, 0.5f, 0.9f);
+
     private GameObject _liquidGo;
     private MeshFilter _liquidFilter;
     private Mesh _liquidMesh;

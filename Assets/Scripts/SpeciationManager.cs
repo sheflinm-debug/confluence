@@ -36,6 +36,16 @@ public class SpeciationManager : MonoBehaviour
     }
     private readonly List<IsolationEvent> _isolationEvents = new List<IsolationEvent>();
 
+    // Real-time seconds between auto-speciation events for the same lineage. At high
+    // compression ratios (Prokaryotic: 25,000 kyr/sec) the SI formula would fire every
+    // few seconds without this floor, which reads as noise rather than meaningful events.
+    [Header("Rate limiter")]
+    [Tooltip("Minimum real-time seconds between two speciation events for the same lineage.")]
+    public float minSecondsBetweenSplits = 8f;
+
+    // Tracks the last real time (Time.time) each lineage split, for cooldown enforcement.
+    private readonly Dictionary<string, float> _lastSpeciationTime = new Dictionary<string, float>();
+
     // Diagnostic state (read by OnGUI).
     private float _maxSIThisFrame;
     private string _dominantLineage = "—";
@@ -64,6 +74,27 @@ public class SpeciationManager : MonoBehaviour
 
     /// Exposed for climate/extinction events to override the ClimateVolatility factor.
     public void SetClimateVolatility(float v) => _climateVolatility = v;
+
+    /// Called by the player-facing gene/choice UI when the player decides to diverge their
+    /// lineage. Finds all agents with communityId==0 and fires a speciation on one of them.
+    public void TriggerPlayerSpeciation()
+    {
+        if (_agentSpawner == null) return;
+        var playerAgents = new List<AgentController>();
+        foreach (var a in _agentSpawner.ActiveAgents)
+            if (a != null && a.communityId == 0) playerAgents.Add(a);
+        if (playerAgents.Count > 0)
+            FireSpeciation(playerAgents);
+    }
+
+    /// Returns true if the given AtmoLineage name belongs to any player-community agent.
+    public bool IsPlayerLineage(string lineageName)
+    {
+        if (_agentSpawner == null) return false;
+        foreach (var a in _agentSpawner.ActiveAgents)
+            if (a != null && a.communityId == 0 && a.AtmoLineage == lineageName) return true;
+        return false;
+    }
 
     // -------------------------------------------------------------------------
     // Unity lifecycle
@@ -123,9 +154,23 @@ public class SpeciationManager : MonoBehaviour
                 _dominantLineage = kvp.Key;
             }
 
+            // Player's lineage (communityId == 0) is never auto-speciated — the player
+            // triggers their own divergence events via the gene / choice UI.
+            bool isPlayerLineage = false;
+            foreach (var a in members) { if (a.communityId == 0) { isPlayerLineage = true; break; } }
+            if (isPlayerLineage) continue;
+
+            // Per-lineage cooldown: even at high kyr-compression, don't fire more than
+            // once per minSecondsBetweenSplits real seconds for the same lineage.
+            _lastSpeciationTime.TryGetValue(kvp.Key, out float lastFired);
+            bool cooledDown = (Time.time - lastFired) >= minSecondsBetweenSplits;
+
             // Roll: random() < SI × tick_length_in_kyr
-            if (Random.value < si * dtKyr)
+            if (cooledDown && Random.value < si * dtKyr)
+            {
+                _lastSpeciationTime[kvp.Key] = Time.time;
                 FireSpeciation(members);
+            }
         }
     }
 

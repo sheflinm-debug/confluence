@@ -300,9 +300,17 @@ public class SimulationBootstrap : MonoBehaviour
                         wetOrigin = _center + tectonics.UnitVerts[floodedVertex] * planetRadius;
                 }
 
+                // Community 0 = player's founding organism, always placed in liquid if available.
                 agentSpawner.SpawnCommunities(communityCount, minMembersPerCommunity, maxMembersPerCommunity,
                     visionMean, visionStdDev, speedMean, speedStdDev, strengthMean, strengthStdDev,
                     hardinessMean, hardinessStdDev, preferenceVariance, wetOrigin);
+
+                // Communities 1–7 = NPC species, each a single founding cell at a random
+                // surface position, with a distinct hue. They evolve autonomously through
+                // the same gene-event and speciation systems as the player's lineage.
+                agentSpawner.SpawnNPCCommunities(7,
+                    visionMean, visionStdDev, speedMean, speedStdDev, strengthMean, strengthStdDev,
+                    hardinessMean, hardinessStdDev, preferenceVariance);
 
                 SpeciationManager speciationManager = gameObject.AddComponent<SpeciationManager>();
                 speciationManager.Init(agentSpawner);

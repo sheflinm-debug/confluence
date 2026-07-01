@@ -236,6 +236,9 @@ public class StormVisualManager : MonoBehaviour
         var emission = visual.Particles.emission;
         emission.rateOverTime = storm.Intensity * 60f;
 
+        // Keep particle color in sync with the fluid (temperature can shift it over time).
+        ApplyLiquidColorToParticles(visual.Particles);
+
         // Pull particles inward toward planet center ("rain falls down toward the planet").
         // Updated each tick so it tracks the storm as it drifts around the sphere.
         Vector3 inward = -outward;
@@ -296,6 +299,30 @@ public class StormVisualManager : MonoBehaviour
         // explicitly assign one that uses a URP particle shader.
         if (_particleMaterial != null)
             renderer.sharedMaterial = _particleMaterial;
+
+        // Seed the startColor from the current fluid color (SyncParticles keeps it live).
+        ApplyLiquidColorToParticles(ps);
+    }
+
+    /// Tints rain particles to match the world's fluid color, slightly brightened so
+    /// droplets read as lighter/airborne rather than the same saturation as the pooled sea.
+    private void ApplyLiquidColorToParticles(ParticleSystem ps)
+    {
+        Color fluidColor = FluidDynamicsManager.Instance != null
+            ? FluidDynamicsManager.Instance.CurrentLiquidColor
+            : new Color(0.06f, 0.22f, 0.5f, 0.9f);
+
+        Color.RGBToHSV(fluidColor, out float h, out float s, out float v);
+        Color rainLow  = Color.HSVToRGB(h, s * 0.55f, Mathf.Min(v + 0.25f, 1f));
+        Color rainHigh = Color.HSVToRGB(h, s * 0.35f, Mathf.Min(v + 0.45f, 1f));
+        rainLow.a  = 0.55f;
+        rainHigh.a = 0.85f;
+
+        var main = ps.main;
+        main.startColor = new ParticleSystem.MinMaxGradient(rainLow, rainHigh);
+
+        if (_particleMaterial != null)
+            _particleMaterial.color = Color.HSVToRGB(h, s * 0.45f, Mathf.Min(v + 0.35f, 1f));
     }
 
     // TODO wind visualization: sample WindManager.GetWind at ~20 surface positions and draw
