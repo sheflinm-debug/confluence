@@ -349,6 +349,11 @@ public class SimulationBootstrap : MonoBehaviour
         orbit.target = transform;
         orbit.distance = planetRadius * 4.5f;
 
+        // Feed the planet's spin rate so the L-key lock knows how fast to co-rotate.
+        SolarSystemRuntime sr = GetComponent<SolarSystemRuntime>();
+        if (sr != null && sr.planetRotationPeriodSeconds > 0f)
+            orbit.planetRotationDegPerSec = 360f / sr.planetRotationPeriodSeconds;
+
         // Force an immediate reposition outside the sphere so the very first frame
         // isn't rendered from the camera's old (possibly inside-the-sphere) location.
         orbit.SnapToTarget();

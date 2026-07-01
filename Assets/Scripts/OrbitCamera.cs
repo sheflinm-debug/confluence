@@ -13,8 +13,15 @@ public class OrbitCamera : MonoBehaviour
     public float scrollSpeed = 400f;
     public float keyZoomSpeed = 30f;
 
+    /// When true the camera co-rotates with the planet so one face stays in view.
+    /// Toggle with L key. Set planetRotationDegPerSec from SimulationBootstrap.
+    public bool PlanetLockEnabled { get; private set; }
+    /// Degrees per second the life-planet rotates on Y. Set once after world gen.
+    public float planetRotationDegPerSec;
+
     private float _yaw;
     private float _pitch = 20f;
+    private bool _lKeyWasPressed;
 
     void Update()
     {
@@ -22,6 +29,20 @@ public class OrbitCamera : MonoBehaviour
 
         var mouse = Mouse.current;
         var keyboard = Keyboard.current;
+
+        // Toggle planet-lock on L key press (falling edge to avoid repeat-fires).
+        if (keyboard != null)
+        {
+            bool lDown = keyboard.lKey.isPressed;
+            if (lDown && !_lKeyWasPressed)
+                PlanetLockEnabled = !PlanetLockEnabled;
+            _lKeyWasPressed = lDown;
+        }
+
+        // Co-rotate with the planet: keep _yaw in sync with the planet's Y rotation
+        // so the same face stays centered regardless of manual input.
+        if (PlanetLockEnabled && planetRotationDegPerSec != 0f)
+            _yaw += planetRotationDegPerSec * Time.deltaTime;
 
         if (mouse != null && mouse.rightButton.isPressed)
         {
@@ -50,6 +71,15 @@ public class OrbitCamera : MonoBehaviour
         distance = Mathf.Clamp(distance, 5f, 500f);
 
         Reposition();
+    }
+
+    void OnGUI()
+    {
+        string label = PlanetLockEnabled ? "[L] Planet-lock: ON" : "[L] Planet-lock: OFF";
+        Color c = PlanetLockEnabled ? new Color(0.4f, 1f, 0.5f) : new Color(0.7f, 0.7f, 0.7f);
+        GUIStyle style = new GUIStyle(GUI.skin.label) { fontSize = 13 };
+        style.normal.textColor = c;
+        GUI.Label(new Rect(10f, Screen.height - 24f, 220f, 20f), label, style);
     }
 
     /// Immediately places the camera at its orbit position, bypassing smoothing.
