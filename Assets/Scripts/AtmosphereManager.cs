@@ -40,6 +40,7 @@ public class AtmosphereManager : MonoBehaviour
     private AgentSpawner _agentSpawner;
     private DayNightCycle _dayNight;
     private bool _expelledGlutFired;
+    private float _gameTimeElapsed; // real seconds since Init() - guards early crisis events
 
     void Awake() => Instance = this;
 
@@ -149,6 +150,7 @@ public class AtmosphereManager : MonoBehaviour
         float producerSolarAvg = producerCount > 0 ? producerSolarSum / producerCount : 0f;
 
         float dt = Time.deltaTime;
+        _gameTimeElapsed += dt;
 
         float consumerExchange = respirationRate * consumerCount * dt;
         if (breathed != null) breathed.Fraction -= consumerExchange;
@@ -160,11 +162,32 @@ public class AtmosphereManager : MonoBehaviour
 
         NormalizeFractions();
 
-        if (!GreatGasEventFired && breathed != null && breathed.Fraction < breathed.CrisisLow)
+        // Guard: the Great Gas Event should only fire once the simulation is past
+        // early Abiogenesis — it represents the GOE or equivalent crisis, which
+        // biologically requires a population large enough to have already altered the
+        // atmosphere. Require at least Era 1b (GOE phase = Era1StartIndex + 2) OR
+        // a minimum of 45 real seconds of gameplay as a fallback when DeepTimeClock
+        // hasn't advanced that far yet.
+        bool gasEventAllowed = false;
+        if (DeepTimeClock.Instance != null)
+            gasEventAllowed = DeepTimeClock.Instance.CurrentPhaseIndex >= EraTimeline.Era1StartIndex + 2;
+        if (!gasEventAllowed && _gameTimeElapsed >= 45f)
+            gasEventAllowed = true;
+
+        if (!GreatGasEventFired && gasEventAllowed && breathed != null && breathed.CrisisLow > 0f && breathed.Fraction < breathed.CrisisLow)
         {
             GreatGasEventFired = true;
             FireGreatGasEvent();
         }
+
+        // After the event fires, hold the breathed gas at a permanently depleted level —
+        // NormalizeFractions can let it creep back up via producers, but the world should
+        // stay hostile until the population has actually evolved efficient respiration.
+        if (GreatGasEventFired && breathed != null)
+            breathed.Fraction = Mathf.Min(breathed.Fraction, 0.05f);
+
+        if (_crisisFlashTimer > 0f)
+            _crisisFlashTimer -= Time.deltaTime;
         if (!_expelledGlutFired && expelled != null && expelled.Fraction > expelled.CrisisHigh)
         {
             _expelledGlutFired = true;
@@ -215,23 +238,49 @@ public class AtmosphereManager : MonoBehaviour
         return count > 0 ? total / count : 0f;
     }
 
+    // Flash timer for the red-screen crisis overlay.
+    private float _crisisFlashTimer;
+
     private void FireGreatGasEvent()
     {
-        Debug.Log("[Atmosphere] Great Gas Event! Breathed gas has collapsed.");
+        Debug.Log("[Atmosphere] GREAT GAS EVENT — breathed gas has collapsed! Mass die-off commencing.");
         GeneEvolutionManager.QueueAtmosphereEvent("GreatGasEvent");
+        _crisisFlashTimer = 4f;
 
         if (_agentSpawner != null)
         {
+            // Kill ~85% of all consumers immediately — this is an extinction-class event,
+            // not a minor setback. Only a resistant tail survives and adapts.
             var toKill = new List<AgentController>();
             foreach (var agent in _agentSpawner.ActiveAgents)
-                if (agent != null && !agent.IsProducer && Random.value < 0.35f) toKill.Add(agent);
+                if (agent != null && !agent.IsProducer && Random.value < 0.85f) toKill.Add(agent);
             foreach (var agent in toKill)
                 if (agent != null) agent.Die();
         }
+
+        // Permanently clamp the breathed gas near-zero so the crisis doesn't quietly
+        // reverse itself — survivors must evolve their way out, not just wait.
+        GasDefinition breathed = GetGasByRole(GasRole.Breathed);
+        if (breathed != null) breathed.CrisisLow = -1f; // disable re-trigger; lock handled in Update
     }
 
     void OnGUI()
     {
+        // Crisis flash: full-screen red tint that fades out over 4 seconds.
+        if (_crisisFlashTimer > 0f)
+        {
+            float alpha = Mathf.Clamp01(_crisisFlashTimer / 4f) * 0.6f;
+            Color prev = GUI.color;
+            GUI.color = new Color(0.9f, 0.05f, 0.05f, alpha);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = new Color(1f, 1f, 1f, alpha);
+            GUI.skin.label.fontSize = 28;
+            GUI.Label(new Rect(Screen.width * 0.5f - 220f, Screen.height * 0.42f, 440f, 60f),
+                "⚠  BREATHABLE GAS COLLAPSED  ⚠");
+            GUI.skin.label.fontSize = 0; // reset to default
+            GUI.color = prev;
+        }
+
         float barWidth = 220f;
         float barHeight = 16f;
         float x = Screen.width - barWidth - 10f;

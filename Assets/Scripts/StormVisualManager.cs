@@ -228,9 +228,13 @@ public class StormVisualManager : MonoBehaviour
     {
         var storm = visual.Storm;
 
-        // Position emitter slightly above surface in the storm's outward direction.
+        // Position emitter slightly above surface. Orient the GO so the disc (XY plane
+        // of local space) lies flat on the surface — Z axis points outward. With
+        // startSpeed=0, particles appear within this flat disc and fall purely from force.
         Vector3 outward = (storm.Position - _planetCenter).normalized;
         visual.ParticleGo.transform.position = storm.Position + outward * 0.3f;
+        Vector3 discUp = Mathf.Abs(Vector3.Dot(outward, Vector3.up)) < 0.99f ? Vector3.up : Vector3.forward;
+        visual.ParticleGo.transform.rotation = Quaternion.LookRotation(outward, discUp);
 
         // Scale emission rate with intensity: 0 at birth/death, up to 35 drops/sec at peak.
         var emission = visual.Particles.emission;
@@ -243,21 +247,25 @@ public class StormVisualManager : MonoBehaviour
         // Updated each tick so it tracks the storm as it drifts around the sphere.
         Vector3 inward = -outward;
         var force = visual.Particles.forceOverLifetime;
-        force.x = new ParticleSystem.MinMaxCurve(inward.x * 14f);
-        force.y = new ParticleSystem.MinMaxCurve(inward.y * 14f);
-        force.z = new ParticleSystem.MinMaxCurve(inward.z * 14f);
+        // Strong inward force is the only thing moving particles — needs to be large
+        // enough to produce visible motion within the short lifetime (0.5–1.0 s).
+        force.x = new ParticleSystem.MinMaxCurve(inward.x * 20f);
+        force.y = new ParticleSystem.MinMaxCurve(inward.y * 20f);
+        force.z = new ParticleSystem.MinMaxCurve(inward.z * 20f);
     }
 
     private void ConfigureParticleSystem(ParticleSystem ps, WeatherManager.StormCell storm)
     {
-        // Main: fast-falling rain streaks visible from orbit distance (~90 units).
+        // Main: rain drops that fall purely due to forceOverLifetime (no initial speed).
+        // startSpeed=0 avoids the starburst/stalk effect where each particle's initial
+        // velocity gets stretched by the Stretch renderer into a long diverging line from
+        // the emitter center. With zero initial speed, particles simply appear in the disc
+        // area and accelerate inward as gravity-driven rain.
         var main = ps.main;
         main.maxParticles = 200;
-        main.startLifetime = new ParticleSystem.MinMaxCurve(0.4f, 0.8f);
-        // High startSpeed so particles streak convincingly downward rather than drifting.
-        main.startSpeed = new ParticleSystem.MinMaxCurve(8f, 14f);
-        // Small cross-section but the Stretch render mode makes them long.
-        main.startSize = new ParticleSystem.MinMaxCurve(0.06f, 0.12f);
+        main.startLifetime = new ParticleSystem.MinMaxCurve(0.5f, 1.0f);
+        main.startSpeed = 0f;
+        main.startSize = new ParticleSystem.MinMaxCurve(0.08f, 0.16f);
         main.startColor = new ParticleSystem.MinMaxGradient(
             new Color(0.55f, 0.70f, 0.95f, 0.60f),
             new Color(0.80f, 0.90f, 1.0f, 0.90f));
@@ -268,17 +276,16 @@ public class StormVisualManager : MonoBehaviour
         var emission = ps.emission;
         emission.rateOverTime = 0f;
 
-        // Emitter disc is above the storm surface, oriented so its normal points
-        // INWARD (toward planet center). startSpeed launches particles directly
-        // toward the surface — no outward burst, no fountain/volcano effect.
+        // Emitter disc lies FLAT on the planet surface (Z axis = outward direction,
+        // so the XY-plane disc is perpendicular to the surface normal). With startSpeed=0,
+        // the shape orientation only controls WHERE particles appear, not their direction;
+        // they all fall inward via forceOverLifetime regardless of spawn position.
         var shape = ps.shape;
         shape.enabled = true;
         shape.shapeType = ParticleSystemShapeType.Circle;
-        shape.radius = Mathf.Max(0.5f, storm.RadiusWorld * 0.35f);
+        shape.radius = Mathf.Max(0.5f, storm.RadiusWorld * 0.40f);
         shape.radiusThickness = 1f;
-        // LookRotation(inward) → emitter normal faces planet center → particles launch inward.
-        Vector3 outward = (storm.Position - _planetCenter).normalized;
-        shape.rotation = Quaternion.LookRotation(-outward, Vector3.up).eulerAngles;
+        shape.rotation = Vector3.zero; // GO rotation (set in SyncParticles) handles orientation
 
         // ForceOverLifetime: extra inward acceleration (gravity), updated each tick.
         var force = ps.forceOverLifetime;
