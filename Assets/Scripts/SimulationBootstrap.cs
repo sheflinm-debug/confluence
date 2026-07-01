@@ -206,7 +206,7 @@ public class SimulationBootstrap : MonoBehaviour
                     Vector3 starDir = (cinematic.StarGo.transform.position - _center).normalized;
                     // Star: 450 units away, diameter scales with rolled luminosity so
                     // a bright O-star fills more of the sky than a dim M-dwarf.
-                    float starDiameter = Mathf.Max(GenesisCinematic.StarSizeFromLuminosity(solarSystem.Star.LuminositySolar) * 6f, 50f);
+                    float starDiameter = Mathf.Max(GenesisCinematic.StarSizeFromLuminosity(solarSystem.Star.LuminositySolar) * 6f, 6f);
                     cinematic.StarGo.transform.localScale = Vector3.one * starDiameter;
                     cinematic.StarGo.transform.position = _center + starDir * 450f;
                 }
@@ -281,6 +281,13 @@ public class SimulationBootstrap : MonoBehaviour
                 GameObject atmosphereVisualGo = new GameObject("AtmosphereVisual");
                 AtmosphereVisual atmosphereVisual = atmosphereVisualGo.AddComponent<AtmosphereVisual>();
                 atmosphereVisual.Build(planetRadius, _center, atmosphere.RolledType, atmosphere.PressureBar, transform);
+
+                // Polar ice overlay: rendered at vertices where ClimateManager reports cold
+                // (poles always cold after latitude-gradient fix; shifts with seasons).
+                GameObject polarIceGo = new GameObject("PolarIceManager");
+                polarIceGo.transform.SetParent(transform);
+                PolarIceManager polarIce = polarIceGo.AddComponent<PolarIceManager>();
+                polarIce.Init(tectonics, _center, planetRadius, elevationWorldScale, transform);
 
                 if (enableWeather)
                 {

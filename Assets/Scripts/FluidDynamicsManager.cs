@@ -296,8 +296,9 @@ public class FluidDynamicsManager : MonoBehaviour
             {
                 Vector3 dir = data.Vertices[i].normalized;
                 // Clamp so a large tidalStrengthScale or close heavy moon can't push
-                // individual vertices into tall spikes. 0.5 wu ≈ 2.5% of planetRadius.
-                float tideDelta = Mathf.Clamp(_tidal.TidalHeightAt(dir), -0.5f, 0.5f);
+                // individual vertices into tall spikes. 0.08 wu ≈ 0.4% of planetRadius —
+                // still a visible tide, not a geometry explosion.
+                float tideDelta = Mathf.Clamp(_tidal.TidalHeightAt(dir), -0.08f, 0.08f);
                 data.Vertices[i] = dir * (data.Vertices[i].magnitude + tideDelta);
             }
         }

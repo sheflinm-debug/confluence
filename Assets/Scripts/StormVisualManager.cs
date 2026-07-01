@@ -243,23 +243,21 @@ public class StormVisualManager : MonoBehaviour
         // Updated each tick so it tracks the storm as it drifts around the sphere.
         Vector3 inward = -outward;
         var force = visual.Particles.forceOverLifetime;
-        force.x = new ParticleSystem.MinMaxCurve(inward.x * 6f);
-        force.y = new ParticleSystem.MinMaxCurve(inward.y * 6f);
-        force.z = new ParticleSystem.MinMaxCurve(inward.z * 6f);
+        force.x = new ParticleSystem.MinMaxCurve(inward.x * 14f);
+        force.y = new ParticleSystem.MinMaxCurve(inward.y * 14f);
+        force.z = new ParticleSystem.MinMaxCurve(inward.z * 14f);
     }
 
     private void ConfigureParticleSystem(ParticleSystem ps, WeatherManager.StormCell storm)
     {
-        // Main: small, short-lived, translucent streaks.
+        // Main: fast-falling rain streaks visible from orbit distance (~90 units).
         var main = ps.main;
-        main.maxParticles = 120;
-        main.startLifetime = new ParticleSystem.MinMaxCurve(0.7f, 1.3f);
-        // startSpeed is positive = launches in the EMISSION direction. The emitter
-        // disc is oriented so its normal points INWARD (toward planet center), so
-        // particles immediately fall toward the surface rather than erupting outward.
-        main.startSpeed = new ParticleSystem.MinMaxCurve(2f, 4f);
-        // Larger particles so they're visible from orbit-camera distance (~90 units).
-        main.startSize = new ParticleSystem.MinMaxCurve(0.14f, 0.26f);
+        main.maxParticles = 200;
+        main.startLifetime = new ParticleSystem.MinMaxCurve(0.4f, 0.8f);
+        // High startSpeed so particles streak convincingly downward rather than drifting.
+        main.startSpeed = new ParticleSystem.MinMaxCurve(8f, 14f);
+        // Small cross-section but the Stretch render mode makes them long.
+        main.startSize = new ParticleSystem.MinMaxCurve(0.06f, 0.12f);
         main.startColor = new ParticleSystem.MinMaxGradient(
             new Color(0.55f, 0.70f, 0.95f, 0.60f),
             new Color(0.80f, 0.90f, 1.0f, 0.90f));
@@ -287,11 +285,11 @@ public class StormVisualManager : MonoBehaviour
         force.enabled = true;
         force.space = ParticleSystemSimulationSpace.World;
 
-        // Stretch particles along their velocity to look like rain streaks.
+        // Stretch particles along velocity into long narrow rain streaks.
         var renderer = ps.GetComponent<ParticleSystemRenderer>();
         renderer.renderMode = ParticleSystemRenderMode.Stretch;
-        renderer.velocityScale = 0.12f;
-        renderer.lengthScale = 1.2f;
+        renderer.velocityScale = 0.30f;  // scale with actual velocity
+        renderer.lengthScale = 4.5f;     // additional fixed elongation
         renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
         // Apply URP-compatible particle material (built in Init). The built-in

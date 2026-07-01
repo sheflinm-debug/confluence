@@ -34,8 +34,26 @@ public static class ClimateManager
     {
         Vector3 p = (worldPosition - _planetCenter).normalized;
         float baseTemp = Sample3DNoise(p, _temperatureOffset) * 100f;
+
+        // Latitude-based temperature gradient: equator (p.y=0) is warmest, poles
+        // (|p.y|=1) are coldest. p.y = sin(latitude) assuming Y is the rotation axis.
+        // Subtracts up to 45 temperature units at the poles so Tundra biome forms there
+        // naturally and the freeze threshold for polar ice is reliably crossed.
+        float latColdening = p.y * p.y * 45f;
+
+        // Seasonal flux: OrbitalSeasons multiplies solar exposure by latitude + orbital
+        // phase. When active, add a ±20-unit seasonal temperature swing so summer/winter
+        // are visible and storms/ice shift with the season.
+        float seasonalDelta = 0f;
+        if (OrbitalSeasons.Instance != null && OrbitalSeasons.Instance.AxialTiltDeg > 0.001f)
+        {
+            float fluxMul = OrbitalSeasons.Instance.FluxMultiplier;
+            float seasonalMul = OrbitalSeasons.Instance.SeasonalExposureMultiplier(p.y);
+            seasonalDelta = (fluxMul * seasonalMul - 1f) * 20f;
+        }
+
         float weatherDelta = WeatherManager.Instance != null ? WeatherManager.Instance.GetTemperatureModifier(worldPosition) : 0f;
-        return Mathf.Clamp(baseTemp + weatherDelta, 0f, 100f);
+        return Mathf.Clamp(baseTemp - latColdening + seasonalDelta + weatherDelta, 0f, 100f);
     }
 
     /// 0-100, plus any transient WeatherManager storm effect (clamped, see GetTemperature).
