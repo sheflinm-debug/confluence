@@ -17,8 +17,9 @@ public class StormVisualManager : MonoBehaviour
     // Enough to clear volcanic peaks while still reading as "on the surface."
     private const float OverlayShellOffset = 0.2f;
 
-    // Max alpha at full storm intensity. Dark gray-blue cloud shadow feel.
-    private const float MaxOverlayAlpha = 0.42f;
+    // Max alpha at full storm intensity. Darker so cloud shadows are clearly visible
+    // against the terrain even at a distance (raised from 0.42).
+    private const float MaxOverlayAlpha = 0.65f;
 
     // How fast the per-storm alpha fades in/out (units per second).
     private const float AlphaFadeSpeed = 0.35f;
@@ -222,7 +223,7 @@ public class StormVisualManager : MonoBehaviour
 
         // Scale emission rate with intensity: 0 at birth/death, up to 35 drops/sec at peak.
         var emission = visual.Particles.emission;
-        emission.rateOverTime = storm.Intensity * 35f;
+        emission.rateOverTime = storm.Intensity * 60f;
 
         // Pull particles inward toward planet center ("rain falls down toward the planet").
         // Updated each tick so it tracks the storm as it drifts around the sphere.
@@ -237,13 +238,14 @@ public class StormVisualManager : MonoBehaviour
     {
         // Main: small, short-lived, translucent streaks.
         var main = ps.main;
-        main.maxParticles = 80;
-        main.startLifetime = new ParticleSystem.MinMaxCurve(0.6f, 1.4f);
-        main.startSpeed = new ParticleSystem.MinMaxCurve(1.5f, 3.5f);
-        main.startSize = new ParticleSystem.MinMaxCurve(0.04f, 0.09f);
+        main.maxParticles = 120;
+        main.startLifetime = new ParticleSystem.MinMaxCurve(0.8f, 1.6f);
+        main.startSpeed = new ParticleSystem.MinMaxCurve(2f, 4.5f);
+        // Larger particles so they're visible from orbit-camera distance (~60 units).
+        main.startSize = new ParticleSystem.MinMaxCurve(0.12f, 0.22f);
         main.startColor = new ParticleSystem.MinMaxGradient(
-            new Color(0.6f, 0.72f, 0.92f, 0.25f),
-            new Color(0.75f, 0.85f, 1.0f, 0.55f));
+            new Color(0.55f, 0.70f, 0.95f, 0.55f),
+            new Color(0.80f, 0.90f, 1.0f, 0.85f));
         main.simulationSpace = ParticleSystemSimulationSpace.World;
         main.gravityModifier = 0f; // handled via forceOverLifetime
 
@@ -254,7 +256,7 @@ public class StormVisualManager : MonoBehaviour
         // Emit from a disk tangent to the surface, sized to ~30% of storm radius.
         var shape = ps.shape;
         shape.enabled = true;
-        shape.shapeType = ParticleSystemShapeType.Disc;
+        shape.shapeType = ParticleSystemShapeType.Circle;
         shape.radius = Mathf.Max(0.5f, storm.RadiusWorld * 0.3f);
         shape.radiusThickness = 1f;
         // Orient the disc so its normal faces outward (particles spawn on surface).
@@ -273,18 +275,10 @@ public class StormVisualManager : MonoBehaviour
         renderer.lengthScale = 1.2f;
         renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
-        // Use a URP unlit particle material; fall back to any available unlit if not found.
-        Shader particleShader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
-        if (particleShader == null) particleShader = Shader.Find("Particles/Standard Unlit");
-        if (particleShader == null) particleShader = Shader.Find("Universal Render Pipeline/Unlit");
-        if (particleShader != null)
-        {
-            Material mat = new Material(particleShader);
-            mat.SetFloat("_Surface", 1f);   // transparent surface mode for URP
-            mat.SetFloat("_Blend", 0f);     // alpha blend
-            mat.renderQueue = 3000;
-            renderer.material = mat;
-        }
+        // Don't override the particle renderer material — Unity's default particle
+        // material works out of the box and is guaranteed to exist. Custom shader
+        // lookup at runtime is fragile (shader stripping, URP path differences).
+        // The default is additive-ish translucent white, which reads fine as rain.
     }
 
     // TODO wind visualization: sample WindManager.GetWind at ~20 surface positions and draw

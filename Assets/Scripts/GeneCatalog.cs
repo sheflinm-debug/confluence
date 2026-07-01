@@ -98,8 +98,10 @@ public static class GeneCatalog
                 new GeneChoice { Label = "Develop Photosynthesis (become a Producer)", Apply = agent => agent.BecomeProducer() },
                 new GeneChoice { Label = "Remain Heterotrophic (stay a Consumer)", Apply = agent => agent.BecomeConsumer() }
             },
-            // Background agents that mature after the player has already chosen default to Consumer.
-            DefaultAutoApply = agent => agent.BecomeConsumer()
+            // Default to Producer: in early eras there are no corpses to scavenge, so
+            // background agents that auto-apply must have a viable energy source.
+            // The player still gets the choice popup first.
+            DefaultAutoApply = agent => agent.BecomeProducer()
         });
     }
 }

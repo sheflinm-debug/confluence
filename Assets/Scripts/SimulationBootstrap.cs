@@ -18,7 +18,7 @@ public class SimulationBootstrap : MonoBehaviour
     public bool enableWeather = true;
     [Tooltip("Number of prevailing-wind latitude bands per hemisphere (Hadley/Ferrel/Polar-like).")]
     public int windCellsPerHemisphere = 3;
-    public float avgStormIntervalSeconds = 18f;
+    public float avgStormIntervalSeconds = 10f;
     public int maxActiveStorms = 6;
 
     [Header("Tectonics (visual terrain only - planetRadius stays a true sphere for movement/collision)")]
@@ -67,7 +67,7 @@ public class SimulationBootstrap : MonoBehaviour
     [Header("Tidal Forces (visual liquid-shell bulge only - planetRadius never changes)")]
     public bool enableTides = true;
     [Tooltip("Overall tidal bulge height in world units. Kept small - this is atmospheric flavor, not a flood mechanic.")]
-    public float tidalStrengthScale = 0.06f;
+    public float tidalStrengthScale = 0.35f;
     [Tooltip("How often the liquid shell mesh is rebuilt with the new tidal offsets.")]
     public float tidalRebuildIntervalSeconds = 0.25f;
     [Tooltip("Solar tide strength relative to a notional close moon (no moon system exists yet in this codebase, so the star is currently the only tidal source - see TidalForceManager for the generalization path).")]
@@ -112,7 +112,8 @@ public class SimulationBootstrap : MonoBehaviour
         // not capsule-sized giants - 0.6 was originally tuned for a multicellular-scale
         // creature and dwarfed the (too-thin) atmosphere shell; both are fixed together.
         if (corpsePrefab == null) corpsePrefab = BuildPrimitivePrefab(PrimitiveType.Cube, 0.2f, new Color(0.35f, 0.25f, 0.2f));
-        if (agentPrefab == null) agentPrefab = BuildPrimitivePrefab(PrimitiveType.Capsule, 0.3f, Color.white);
+        // Scale starts at Abiogenesis microbe size (0.05); EraManager grows it over eras.
+        if (agentPrefab == null) agentPrefab = BuildPrimitivePrefab(PrimitiveType.Capsule, 0.05f, Color.white);
 
         ClimateManager.Randomize(_center, planetRadius, climateNoiseScale);
 
@@ -196,6 +197,29 @@ public class SimulationBootstrap : MonoBehaviour
                 // Live gameplay begins here - same handoff point DeepTimeClock keeps
                 // running through, so the seasonal cycle starts ticking now too.
                 orbitalSeasons.BeginGameplay();
+
+                // Place background objects at proper deep-space distances so the star
+                // reads as a distant sun and other planets as tiny bright specks —
+                // not the cinematic's compressed solar-system scale.
+                if (cinematic.StarGo != null)
+                {
+                    Vector3 starDir = (cinematic.StarGo.transform.position - _center).normalized;
+                    // Star: 450 units away, diameter scales with rolled luminosity so
+                    // a bright O-star fills more of the sky than a dim M-dwarf.
+                    float starDiameter = Mathf.Max(GenesisCinematic.StarSizeFromLuminosity(solarSystem.Star.LuminositySolar) * 6f, 50f);
+                    cinematic.StarGo.transform.localScale = Vector3.one * starDiameter;
+                    cinematic.StarGo.transform.position = _center + starDir * 450f;
+                }
+                foreach (var pg in cinematic.OtherPlanetGos)
+                {
+                    if (pg == null) continue;
+                    Vector3 pDir = (pg.transform.position - _center).normalized;
+                    float pDist = Vector3.Distance(pg.transform.position, _center);
+                    // Other planets: 2–3 unit dots placed 150–350 units away so they're
+                    // visible as distant specks but never compete with the life-planet.
+                    pg.transform.localScale = Vector3.one * 2.5f;
+                    pg.transform.position = _center + pDir * Mathf.Clamp(pDist * 5f, 120f, 350f);
+                }
 
                 // Real orbital motion (decorative other-planets + every rolled moon) and
                 // the life-planet's own axial spin both start now too - same handoff
@@ -283,6 +307,9 @@ public class SimulationBootstrap : MonoBehaviour
                 SpeciationManager speciationManager = gameObject.AddComponent<SpeciationManager>();
                 speciationManager.Init(agentSpawner);
 
+                EraManager eraManager = gameObject.AddComponent<EraManager>();
+                eraManager.Init(agentSpawner);
+
                 PopulationStatsOverlay overlay = gameObject.AddComponent<PopulationStatsOverlay>();
                 overlay.agentSpawner = agentSpawner;
 
@@ -309,7 +336,7 @@ public class SimulationBootstrap : MonoBehaviour
     private void SetupOrbitCamera()
     {
         Camera cam = Camera.main;
-        if (cam == null) cam = FindFirstObjectByType<Camera>();
+        if (cam == null) cam = FindAnyObjectByType<Camera>();
         if (cam == null)
         {
             GameObject camGo = new GameObject("Main Camera");
@@ -325,5 +352,15 @@ public class SimulationBootstrap : MonoBehaviour
         // Force an immediate reposition outside the sphere so the very first frame
         // isn't rendered from the camera's old (possibly inside-the-sphere) location.
         orbit.SnapToTarget();
+
+        // Space background: kill Unity's default sky-blue skybox and replace with
+        // solid black so the scene reads as outer space rather than a surface environment.
+        cam.clearFlags = CameraClearFlags.SolidColor;
+        cam.backgroundColor = Color.black;
+        RenderSettings.skybox = null;
+        // Very faint deep-blue ambient so the unlit side of the planet isn't pitch black
+        // (stars still provide trace illumination in real space).
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+        RenderSettings.ambientLight = new Color(0.04f, 0.04f, 0.07f);
     }
 }

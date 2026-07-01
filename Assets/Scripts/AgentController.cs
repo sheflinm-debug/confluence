@@ -86,7 +86,10 @@ public class AgentController : MonoBehaviour
     [Tooltip("Random per-agent eat-count thresholds so genes don't all fire in the same order or at the same time.")]
     public Vector2Int sensoryGeneEatThresholdRange = new Vector2Int(4, 9);
     public Vector2Int locomotorGeneEatThresholdRange = new Vector2Int(4, 9);
-    public Vector2 kingdomForkAgeThresholdRange = new Vector2(20f, 60f); // seconds
+    // Lowered from (20,60): the Kingdom Fork (photosynthesis vs heterotrophy) is a
+    // primordial metabolic choice that should happen very early in the Abiogenesis era,
+    // well before the default 15 s starvation clock runs out on the first consumer.
+    public Vector2 kingdomForkAgeThresholdRange = new Vector2(5f, 12f); // seconds
     // Stand-in "sustained adversity" gate for ReproductiveStrategyShift until a real
     // per-agent stress accumulator exists - see GeneCatalog.cs TODO.
     public Vector2 reproductiveShiftAgeThresholdRange = new Vector2(30f, 70f); // seconds
@@ -164,7 +167,9 @@ public class AgentController : MonoBehaviour
         planetRadius = radius;
         _corpseSpawner = corpseSpawner;
         _spawner = spawner;
-        _timeSinceLastMeal = 0f;
+        // Grace period: start starve-clock negative so new agents (especially the very
+        // first organism, which has no food yet) have time for KingdomFork to fire.
+        _timeSinceLastMeal = -starvationTime;
         _solarEnergy = maxSolarEnergy * 0.5f; // producers start at half charge
         AgeSeconds = 0f;
         communityId = community;
@@ -201,6 +206,11 @@ public class AgentController : MonoBehaviour
         Vector3 normal = (transform.position - planetCenter).normalized;
         _heading = Vector3.Cross(normal, Random.onUnitSphere).normalized;
         AlignToSurface();
+
+        // Apply current era's visual scale so new agents (including offspring) always
+        // spawn at the right size, not at the prefab's default size.
+        if (EraManager.Instance != null)
+            transform.localScale = Vector3.one * EraManager.Instance.AgentTargetScale;
     }
 
     /// Sets this agent's trait dimensions and registers them with the live population stats.
@@ -474,6 +484,11 @@ public class AgentController : MonoBehaviour
     /// on every subsequent qualifying tick/meal until a mate turns up.
     private void TryReproduce()
     {
+        // Era-based population cap: don't reproduce if we're at or above the limit.
+        if (EraManager.Instance != null && _spawner != null &&
+            _spawner.ActiveAgents.Count >= EraManager.Instance.MaxPopulation)
+            return;
+
         if (!IsSexual)
         {
             _eatsSinceReproduction = 0;

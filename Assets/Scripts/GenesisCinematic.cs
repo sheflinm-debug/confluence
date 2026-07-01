@@ -90,7 +90,7 @@ public class GenesisCinematic : MonoBehaviour
         _elevationWorldScale = elevationWorldScale;
 
         _cam = Camera.main;
-        if (_cam == null) _cam = FindFirstObjectByType<Camera>();
+        if (_cam == null) _cam = FindAnyObjectByType<Camera>();
         if (_cam == null)
         {
             GameObject camGo = new GameObject("Main Camera");
