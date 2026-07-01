@@ -9,10 +9,19 @@ using UnityEngine;
 /// the live colony simulation, ticking through Era 1's sub-phases as a caption overlay.
 public class DeepTimeClock : MonoBehaviour
 {
+    public static DeepTimeClock Instance { get; private set; }
+
+    // Current phase index into EraTimeline.Phases; clamped to array length when finished.
+    public int CurrentPhaseIndex => _phaseIndex;
+    public bool IsFinished => _finished;
+
     private int _phaseIndex;
     private float _phaseT;
     private bool _running;
     private bool _finished;
+
+    void Awake() { Instance = this; }
+    void OnDestroy() { if (Instance == this) Instance = null; }
 
     public void StartFrom(int phaseIndex)
     {

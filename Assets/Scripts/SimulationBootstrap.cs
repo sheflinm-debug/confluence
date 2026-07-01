@@ -181,6 +181,8 @@ public class SimulationBootstrap : MonoBehaviour
 
         Debug.Log($"[World] Star: {solarSystem.Star.SpectralClass}-class @ {solarSystem.LifePlanetOrbitAU:F2} AU " +
             $"(e={solarSystem.LifePlanetEccentricity:F2}, tilt={solarSystem.LifePlanetAxialTiltDeg:F0} deg) | " +
+            $"HZ: {solarSystem.HabitableZoneInnerAU:F2}-{solarSystem.HabitableZoneOuterAU:F2} AU ({(solarSystem.LifePlanetInHabitableZone ? "in zone" : "out of zone")}) | " +
+            $"Life moons: {solarSystem.LifePlanetMoons.Count} | " +
             $"Rock archetype: {archetype.Id} | Liquid: {(liquid != null ? liquid.Name : "none")} | Temp: {temperature.CurrentK:F0}K");
 
         // All world data is generated synchronously above (cheap, deterministic). The
@@ -195,11 +197,19 @@ public class SimulationBootstrap : MonoBehaviour
                 // running through, so the seasonal cycle starts ticking now too.
                 orbitalSeasons.BeginGameplay();
 
+                // Real orbital motion (decorative other-planets + every rolled moon) and
+                // the life-planet's own axial spin both start now too - same handoff
+                // point as everything else here, so the cinematic itself never shows
+                // anything moving that live gameplay hasn't actually started yet.
+                SolarSystemRuntime solarRuntime = gameObject.AddComponent<SolarSystemRuntime>();
+                solarRuntime.planetRotationPeriodSeconds = dayNight.dayLengthSeconds;
+                solarRuntime.Init(solarSystem, cinematic);
+
                 // Tidal bulging starts once the liquid shell is fully revealed and gameplay
                 // is live - no point animating tides during the cinematic's own liquid
-                // fade-in. No moon system exists yet in this codebase (checked
-                // StarSystemGenerator.SolarSystemDef), so this is currently star-only; see
-                // TidalForceManager's header comment for how to add moons later.
+                // fade-in. SolarSystemDef.LifePlanetMoons now exists, so TidalForceManager
+                // gets real per-moon sources added via AddMoonTidalSources() below,
+                // in addition to the star-only solar tide it always had.
                 TidalForceManager tidal = null;
                 if (enableTides && cinematic.HasLiquid)
                 {
@@ -209,6 +219,10 @@ public class SimulationBootstrap : MonoBehaviour
                     tidal.starTidalRelativeStrength = starTidalRelativeStrength;
                     tidal.Init(_center, cinematic.LiquidMesh, cinematic.LiquidShellData,
                         planetRadius, cinematic.SeaLevel, cinematic.ElevationWorldScale, dayNight, solarSystem);
+                    // Now that moons are live (SolarSystemRuntime.Init ran just above),
+                    // add a tidal source per life-planet moon - tidal forces accumulate
+                    // from every massive body, and a close moon typically dominates the star.
+                    tidal.AddMoonTidalSources(solarRuntime);
                 }
 
                 // Live fluid simulation takes over from the genesis cinematic's one-time
@@ -244,6 +258,14 @@ public class SimulationBootstrap : MonoBehaviour
                 AtmosphereVisual atmosphereVisual = atmosphereVisualGo.AddComponent<AtmosphereVisual>();
                 atmosphereVisual.Build(planetRadius, _center, atmosphere.RolledType, atmosphere.PressureBar, transform);
 
+                if (enableWeather)
+                {
+                    GameObject stormVisualGo = new GameObject("StormVisualManager");
+                    stormVisualGo.transform.SetParent(transform);
+                    StormVisualManager stormVisual = stormVisualGo.AddComponent<StormVisualManager>();
+                    stormVisual.Init(tectonics, _center, planetRadius, elevationWorldScale, transform);
+                }
+
                 // Place the founding organism literally inside a flooded tile, not
                 // anywhere on the sphere - it must originate in the liquid.
                 Vector3? wetOrigin = null;
@@ -257,6 +279,9 @@ public class SimulationBootstrap : MonoBehaviour
                 agentSpawner.SpawnCommunities(communityCount, minMembersPerCommunity, maxMembersPerCommunity,
                     visionMean, visionStdDev, speedMean, speedStdDev, strengthMean, strengthStdDev,
                     hardinessMean, hardinessStdDev, preferenceVariance, wetOrigin);
+
+                SpeciationManager speciationManager = gameObject.AddComponent<SpeciationManager>();
+                speciationManager.Init(agentSpawner);
 
                 PopulationStatsOverlay overlay = gameObject.AddComponent<PopulationStatsOverlay>();
                 overlay.agentSpawner = agentSpawner;

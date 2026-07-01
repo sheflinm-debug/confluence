@@ -360,10 +360,12 @@ public class AgentController : MonoBehaviour
 
     /// Speciation: under sustained atmospheric stress, a stressed individual has a random
     /// chance per second (scaling with how far past the stress threshold it is) to re-lock
-    /// its ideal mix to the CURRENT atmosphere and found a new lineage - i.e. it becomes
-    /// adapted to the new gas balance instead of the one its ancestors were born into.
+    /// its ideal mix to the CURRENT atmosphere and found a new lineage. Skipped when
+    /// SpeciationManager is active — it owns the timing in that case.
     private void AttemptAtmosphericSpeciation()
     {
+        if (SpeciationManager.Instance != null) return; // SpeciationManager owns speciation
+
         if (AtmosphereManager.Instance == null) return;
         float discomfort = GetAtmosphericDiscomfort();
         float excess = discomfort - speciationStressThreshold;
@@ -376,14 +378,40 @@ public class AgentController : MonoBehaviour
             gasTolerance = Mathf.Clamp(PopulationStats.SampleDimension(gasTolerance, mutationStdDev), 0f, 100f);
             AtmoLineage = KingdomNameGenerator.Generate();
 
-            // Visible marker of the split: a freshly rolled hue distinct from the
-            // parent lineage's color, so divergent lineages read as different species
-            // at a glance even before a richer visual-speciation system exists.
             lineageColor = Color.HSVToRGB(Random.value, Random.Range(0.65f, 0.95f), Random.Range(0.85f, 1f));
             ApplyLineageColor();
 
             Debug.Log($"[Speciation] {name} adapted to the shifted atmosphere -> new lineage '{AtmoLineage}'");
         }
+    }
+
+    /// Called by SpeciationManager when the SI formula selects this agent to found a new
+    /// lineage. Re-locks ideal gas mix, assigns new lineage name/color, and drifts 1–2
+    /// traits to represent niche divergence.
+    public void TriggerSpeciation(string lineageName, Color color)
+    {
+        _idealGasMix = AtmosphereManager.Instance != null
+            ? AtmosphereManager.Instance.SnapshotMix()
+            : new Dictionary<string, float>();
+        gasTolerance = Mathf.Clamp(PopulationStats.SampleDimension(gasTolerance, mutationStdDev), 0f, 100f);
+        AtmoLineage = lineageName;
+        lineageColor = color;
+        ApplyLineageColor();
+
+        // Drift 1 or 2 randomly chosen traits to represent ecological niche divergence.
+        int driftCount = Random.Range(1, 3);
+        float[] current = { visionTrait, speedTrait, strengthTrait, hardinessTrait, temperaturePreference, moisturePreference };
+        // Shuffle indices using Fisher-Yates.
+        int[] indices = { 0, 1, 2, 3, 4, 5 };
+        for (int i = indices.Length - 1; i > 0; i--)
+        {
+            int j = Random.Range(0, i + 1);
+            int tmp = indices[i]; indices[i] = indices[j]; indices[j] = tmp;
+        }
+        for (int k = 0; k < driftCount; k++)
+            current[indices[k]] = Mathf.Clamp(PopulationStats.SampleDimension(current[indices[k]], mutationStdDev * 2f), 0f, 100f);
+
+        SetTraits(current[0], current[1], current[2], current[3], current[4], current[5]);
     }
 
     private void UpdateConsumer()
