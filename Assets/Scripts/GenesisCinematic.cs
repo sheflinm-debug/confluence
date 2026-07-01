@@ -98,6 +98,14 @@ public class GenesisCinematic : MonoBehaviour
             camGo.tag = "MainCamera";
         }
 
+        // Space background from frame 1 of the cinematic (Big Bang through Abiogenesis).
+        // SetupOrbitCamera repeats this post-cinematic so it survives any camera reconfiguration.
+        _cam.clearFlags = CameraClearFlags.SolidColor;
+        _cam.backgroundColor = Color.black;
+        RenderSettings.skybox = null;
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+        RenderSettings.ambientLight = new Color(0.04f, 0.04f, 0.07f);
+
         _molten = BuildMoltenData(tectonics, planetRadius);
         _terrainOnly = PlanetTileMesh.BuildData(tectonics, planetRadius, elevationWorldScale, archetype);
 
@@ -341,10 +349,10 @@ public class GenesisCinematic : MonoBehaviour
     {
         float duration = EraTimeline.Phases[EraTimeline.AbioticStartIndex + 0].DurationSeconds;
 
-        // Reveal beat: grow from the small intro display scale to true gameplay size
-        // while the camera pushes in to match - this is where the planet's real size
-        // (planetRadius) finally takes over from the compressed system-view scale.
-        const float growDuration = 1.5f;
+        // Reveal beat: snap from the compressed system-view scale to true gameplay size.
+        // The previous 1.5 s lerp was visible as a jarring planet-enlargement on screen;
+        // the camera zoom-in is the real "reveal" — the scale change should be imperceptible.
+        const float growDuration = 0.08f;
         Vector3 startScale = _lifePlanetGo.transform.localScale;
         Vector3 fullScale = Vector3.one;
         Vector3 startCamPos = _cam.transform.position;

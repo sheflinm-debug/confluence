@@ -229,9 +229,9 @@ public class StormVisualManager : MonoBehaviour
         // Updated each tick so it tracks the storm as it drifts around the sphere.
         Vector3 inward = -outward;
         var force = visual.Particles.forceOverLifetime;
-        force.x = new ParticleSystem.MinMaxCurve(inward.x * 4f);
-        force.y = new ParticleSystem.MinMaxCurve(inward.y * 4f);
-        force.z = new ParticleSystem.MinMaxCurve(inward.z * 4f);
+        force.x = new ParticleSystem.MinMaxCurve(inward.x * 6f);
+        force.y = new ParticleSystem.MinMaxCurve(inward.y * 6f);
+        force.z = new ParticleSystem.MinMaxCurve(inward.z * 6f);
     }
 
     private void ConfigureParticleSystem(ParticleSystem ps, WeatherManager.StormCell storm)
@@ -239,13 +239,16 @@ public class StormVisualManager : MonoBehaviour
         // Main: small, short-lived, translucent streaks.
         var main = ps.main;
         main.maxParticles = 120;
-        main.startLifetime = new ParticleSystem.MinMaxCurve(0.8f, 1.6f);
-        main.startSpeed = new ParticleSystem.MinMaxCurve(2f, 4.5f);
-        // Larger particles so they're visible from orbit-camera distance (~60 units).
-        main.startSize = new ParticleSystem.MinMaxCurve(0.12f, 0.22f);
+        main.startLifetime = new ParticleSystem.MinMaxCurve(0.7f, 1.3f);
+        // startSpeed is positive = launches in the EMISSION direction. The emitter
+        // disc is oriented so its normal points INWARD (toward planet center), so
+        // particles immediately fall toward the surface rather than erupting outward.
+        main.startSpeed = new ParticleSystem.MinMaxCurve(2f, 4f);
+        // Larger particles so they're visible from orbit-camera distance (~90 units).
+        main.startSize = new ParticleSystem.MinMaxCurve(0.14f, 0.26f);
         main.startColor = new ParticleSystem.MinMaxGradient(
-            new Color(0.55f, 0.70f, 0.95f, 0.55f),
-            new Color(0.80f, 0.90f, 1.0f, 0.85f));
+            new Color(0.55f, 0.70f, 0.95f, 0.60f),
+            new Color(0.80f, 0.90f, 1.0f, 0.90f));
         main.simulationSpace = ParticleSystemSimulationSpace.World;
         main.gravityModifier = 0f; // handled via forceOverLifetime
 
@@ -253,17 +256,19 @@ public class StormVisualManager : MonoBehaviour
         var emission = ps.emission;
         emission.rateOverTime = 0f;
 
-        // Emit from a disk tangent to the surface, sized to ~30% of storm radius.
+        // Emitter disc is above the storm surface, oriented so its normal points
+        // INWARD (toward planet center). startSpeed launches particles directly
+        // toward the surface — no outward burst, no fountain/volcano effect.
         var shape = ps.shape;
         shape.enabled = true;
         shape.shapeType = ParticleSystemShapeType.Circle;
-        shape.radius = Mathf.Max(0.5f, storm.RadiusWorld * 0.3f);
+        shape.radius = Mathf.Max(0.5f, storm.RadiusWorld * 0.35f);
         shape.radiusThickness = 1f;
-        // Orient the disc so its normal faces outward (particles spawn on surface).
+        // LookRotation(inward) → emitter normal faces planet center → particles launch inward.
         Vector3 outward = (storm.Position - _planetCenter).normalized;
-        shape.rotation = Quaternion.LookRotation(outward, Vector3.up).eulerAngles;
+        shape.rotation = Quaternion.LookRotation(-outward, Vector3.up).eulerAngles;
 
-        // ForceOverLifetime: inward gravity set each tick by SyncParticles.
+        // ForceOverLifetime: extra inward acceleration (gravity), updated each tick.
         var force = ps.forceOverLifetime;
         force.enabled = true;
         force.space = ParticleSystemSimulationSpace.World;

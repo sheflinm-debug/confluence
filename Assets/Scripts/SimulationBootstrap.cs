@@ -347,7 +347,7 @@ public class SimulationBootstrap : MonoBehaviour
         OrbitCamera orbit = cam.GetComponent<OrbitCamera>();
         if (orbit == null) orbit = cam.gameObject.AddComponent<OrbitCamera>();
         orbit.target = transform;
-        orbit.distance = planetRadius * 3f;
+        orbit.distance = planetRadius * 4.5f;
 
         // Force an immediate reposition outside the sphere so the very first frame
         // isn't rendered from the camera's old (possibly inside-the-sphere) location.
