@@ -198,6 +198,13 @@ public class SimulationBootstrap : MonoBehaviour
                 // running through, so the seasonal cycle starts ticking now too.
                 orbitalSeasons.BeginGameplay();
 
+                // Snap the life-planet from its cinematic intro-scale to true game scale.
+                // The cinematic kept it at IntroDisplayRadius/planetRadius throughout so it
+                // wouldn't dwarf its own star; now the orbit camera takes over and the
+                // planet should be at full size.
+                if (cinematic.LifePlanetGo != null)
+                    cinematic.LifePlanetGo.transform.localScale = Vector3.one;
+
                 // Place background objects at proper deep-space distances so the star
                 // reads as a distant sun and other planets as tiny bright specks —
                 // not the cinematic's compressed solar-system scale.

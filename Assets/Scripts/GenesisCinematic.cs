@@ -349,14 +349,18 @@ public class GenesisCinematic : MonoBehaviour
     {
         float duration = EraTimeline.Phases[EraTimeline.AbioticStartIndex + 0].DurationSeconds;
 
-        // Reveal beat: snap from the compressed system-view scale to true gameplay size.
-        // The previous 1.5 s lerp was visible as a jarring planet-enlargement on screen;
-        // the camera zoom-in is the real "reveal" — the scale change should be imperceptible.
+        // Keep the planet at IntroDisplayRadius scale for the entire cinematic — it only
+        // jumps to Vector3.one (game scale) in onComplete, after the camera has already
+        // transitioned to the orbit-camera. Growing to full scale here made the planet
+        // 20-unit radius while the cinematic star was only ~7 units, so the planet
+        // dwarfed its own star for the rest of the cinematic.
         const float growDuration = 0.08f;
         Vector3 startScale = _lifePlanetGo.transform.localScale;
-        Vector3 fullScale = Vector3.one;
+        Vector3 fullScale = Vector3.one * (IntroDisplayRadius / _planetRadius); // stay at intro scale
         Vector3 startCamPos = _cam.transform.position;
-        Vector3 closeCamPos = center + Vector3.back * (_planetRadius * 2.5f) + Vector3.up * (_planetRadius * 0.5f);
+        // Camera distance also in intro-scale space so the planet fills the frame the same
+        // way it did before, just at the smaller visual radius.
+        Vector3 closeCamPos = center + Vector3.back * (IntroDisplayRadius * 2.5f) + Vector3.up * (IntroDisplayRadius * 0.5f);
 
         float gt = 0f;
         while (gt < growDuration)
@@ -392,7 +396,7 @@ public class GenesisCinematic : MonoBehaviour
         GameObject flash = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         Destroy(flash.GetComponent<Collider>());
         Vector3 dir = Random.onUnitSphere;
-        flash.transform.position = center + dir * 20f;
+        flash.transform.position = center + dir * (IntroDisplayRadius * 1.6f);
         Material mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
         mat.color = Color.white;
         mat.EnableKeyword("_EMISSION");
@@ -478,7 +482,8 @@ public class GenesisCinematic : MonoBehaviour
     {
         float duration = EraTimeline.Phases[EraTimeline.AbioticStartIndex + 3].DurationSeconds;
         Vector3 startPos = _cam.transform.position;
-        Vector3 revealPos = center + Vector3.back * (planetRadius * 2.2f) + Vector3.up * (planetRadius * 0.9f);
+        // Use IntroDisplayRadius not planetRadius — planet is still at intro scale here.
+        Vector3 revealPos = center + Vector3.back * (IntroDisplayRadius * 2.2f) + Vector3.up * (IntroDisplayRadius * 0.9f);
 
         float t = 0f;
         while (t < duration)
