@@ -210,7 +210,15 @@ public class AgentController : MonoBehaviour
         // Apply current era's visual scale so new agents (including offspring) always
         // spawn at the right size, not at the prefab's default size.
         if (EraManager.Instance != null)
+        {
             transform.localScale = Vector3.one * EraManager.Instance.AgentTargetScale;
+
+            // In early eras (Abiogenesis / Prokaryotic) bias toward wet areas — life
+            // begins in liquid, not on dry land. moisturePreference=90 drives comfort-
+            // seeking toward the wettest available terrain.
+            if (EraManager.Instance.CurrentEra <= 1)
+                moisturePreference = 90f;
+        }
     }
 
     /// Sets this agent's trait dimensions and registers them with the live population stats.
@@ -437,7 +445,8 @@ public class AgentController : MonoBehaviour
 
         _heading = Vector3.Slerp(_heading, desiredTangent, turnSpeed * Time.deltaTime).normalized;
 
-        Vector3 newPos = SphereSurface.MoveAlongSurface(transform.position, _heading, moveSpeed * Time.deltaTime, planetCenter, planetRadius);
+        float eraMult = EraManager.Instance != null ? EraManager.Instance.MoveSpeedMultiplier : 1f;
+        Vector3 newPos = SphereSurface.MoveAlongSurface(transform.position, _heading, moveSpeed * eraMult * Time.deltaTime, planetCenter, planetRadius);
         transform.position = newPos;
         AlignToSurface();
 
@@ -509,7 +518,8 @@ public class AgentController : MonoBehaviour
         Vector3 desiredTangent = ComputeProducerMovementTangent();
         _heading = Vector3.Slerp(_heading, desiredTangent, turnSpeed * Time.deltaTime).normalized;
 
-        Vector3 newPos = SphereSurface.MoveAlongSurface(transform.position, _heading, moveSpeed * Time.deltaTime, planetCenter, planetRadius);
+        float eraMult = EraManager.Instance != null ? EraManager.Instance.MoveSpeedMultiplier : 1f;
+        Vector3 newPos = SphereSurface.MoveAlongSurface(transform.position, _heading, moveSpeed * eraMult * Time.deltaTime, planetCenter, planetRadius);
         transform.position = newPos;
         AlignToSurface();
 

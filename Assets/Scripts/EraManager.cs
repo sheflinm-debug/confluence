@@ -19,8 +19,12 @@ public class EraManager : MonoBehaviour
 
     // Per-Era1-subphase properties. Index 0 = Abiogenesis, 5 = Cambrian Explosion.
     // EraTimeline.Era1StartIndex = 8, so era sub-phase 0 = phase index 8.
-    private static readonly float[] AgentScalePerEra  = { 0.05f, 0.08f, 0.10f, 0.15f, 0.22f, 0.32f };
-    private static readonly int[]   MaxPopPerEra       = {    15,    40,    60,   100,   180,   300  };
+    private static readonly float[] AgentScalePerEra    = { 0.05f, 0.08f, 0.10f, 0.15f, 0.22f, 0.32f };
+    private static readonly int[]   MaxPopPerEra         = {    15,    40,    60,   100,   180,   300  };
+    // Fraction of an agent's computed moveSpeed that's actually used.
+    // Primordial microbes are sluggish; locomotion genes unlock speed over time.
+    // Agents poll this in Update so era transitions take effect on all live agents.
+    private static readonly float[] MoveSpeedMultPerEra = { 0.18f, 0.30f, 0.45f, 0.60f, 0.80f, 1.00f };
     private static readonly string[] EraNames          =
     {
         "Abiogenesis",
@@ -39,6 +43,9 @@ public class EraManager : MonoBehaviour
 
     /// Hard population cap for the current era.
     public int MaxPopulation => CurrentEra >= 0 ? MaxPopPerEra[CurrentEra] : MaxPopPerEra[0];
+
+    /// Fraction of computed moveSpeed that's active in the current era (0–1).
+    public float MoveSpeedMultiplier => CurrentEra >= 0 ? MoveSpeedMultPerEra[CurrentEra] : MoveSpeedMultPerEra[0];
 
     private AgentSpawner _spawner;
     private string _flashText = "";

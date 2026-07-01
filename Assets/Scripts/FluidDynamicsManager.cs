@@ -72,9 +72,14 @@ public class FluidDynamicsManager : MonoBehaviour
     private MeshFilter _liquidFilter;
     private Mesh _liquidMesh;
 
+    private float[] _prevVolume;
+    private float[] _targetVolume;
+    private float[] _displayVolume;
+    private float _lerpT;
+    private float _lerpDuration;
+
     private float _moistureReservoir;
     private float _flowTickTimer;
-    private float _meshRebuildTimer;
 
     /// Wires up the live simulation using the SAME tectonics/seaLevel/liquid data the genesis
     /// flood fill used, so the takeover is seamless (same wet vertices start wet). Call this
@@ -116,8 +121,13 @@ public class FluidDynamicsManager : MonoBehaviour
             }
         }
 
+        _prevVolume = new float[n];
+        _targetVolume = (float[])_liquidVolume.Clone();
+        _displayVolume = (float[])_liquidVolume.Clone();
+        _lerpT = 1f;
+        _lerpDuration = flowTickInterval;
+
         _flowTickTimer = 0f;
-        _meshRebuildTimer = 0f;
         _moistureReservoir = 0f;
         enabled = liquid != null; // nothing to simulate on a dry world
     }
@@ -134,17 +144,23 @@ public class FluidDynamicsManager : MonoBehaviour
         if (_flowTickTimer >= flowTickInterval)
         {
             float tickDt = _flowTickTimer;
+            _lerpDuration = _flowTickTimer;
             _flowTickTimer = 0f;
+            System.Array.Copy(_liquidVolume, _prevVolume, _liquidVolume.Length);
             StepFlow();
             StepEvaporationAndPrecipitation(tickDt);
+            System.Array.Copy(_liquidVolume, _targetVolume, _liquidVolume.Length);
+            _lerpT = 0f;
         }
 
-        _meshRebuildTimer += dt;
-        if (_meshRebuildTimer >= meshRebuildInterval)
-        {
-            _meshRebuildTimer = 0f;
-            RebuildShellMesh();
-        }
+        if (_lerpDuration > 0f)
+            _lerpT = Mathf.Clamp01(_lerpT + dt / _lerpDuration);
+
+        int n = _displayVolume.Length;
+        for (int v = 0; v < n; v++)
+            _displayVolume[v] = Mathf.Lerp(_prevVolume[v], _targetVolume[v], _lerpT);
+
+        RebuildShellMesh();
     }
 
     /// Degree-normalized Jacobi-style diffusion of liquid volume toward lower neighbors -
@@ -256,7 +272,7 @@ public class FluidDynamicsManager : MonoBehaviour
 
         float tempK = _getLiquidTempK != null ? _getLiquidTempK() : temperatureReferenceK;
         PlanetTileMesh.MeshData data = PlanetTileMesh.BuildLiquidShellDataFromVolume(
-            _tectonics, _radius, _elevationWorldScale, _liquidVolume, minVolumeToRender, _liquid, tempK);
+            _tectonics, _radius, _elevationWorldScale, _displayVolume, minVolumeToRender, _liquid, tempK);
 
         bool hasAnyLiquid = data.Vertices != null && data.Vertices.Length > 0;
         if (!_liquidGo.activeSelf && hasAnyLiquid) _liquidGo.SetActive(true);
@@ -273,7 +289,9 @@ public class FluidDynamicsManager : MonoBehaviour
             for (int i = 0; i < data.Vertices.Length; i++)
             {
                 Vector3 dir = data.Vertices[i].normalized;
-                float tideDelta = _tidal.TidalHeightAt(dir);
+                // Clamp so a large tidalStrengthScale or close heavy moon can't push
+                // individual vertices into tall spikes. 0.5 wu ≈ 2.5% of planetRadius.
+                float tideDelta = Mathf.Clamp(_tidal.TidalHeightAt(dir), -0.5f, 0.5f);
                 data.Vertices[i] = dir * (data.Vertices[i].magnitude + tideDelta);
             }
         }

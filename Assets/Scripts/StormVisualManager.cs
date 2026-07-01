@@ -40,6 +40,7 @@ public class StormVisualManager : MonoBehaviour
     private float _elevationWorldScale;
     private Transform _parent;
     private Material _overlayMaterial;
+    private Material _particleMaterial;
 
     private readonly List<StormVisual> _visuals = new List<StormVisual>();
     private float _tickTimer;
@@ -57,6 +58,16 @@ public class StormVisualManager : MonoBehaviour
 
         Shader shader = Shader.Find("Custom/VertexColorTransparentURP");
         _overlayMaterial = new Material(shader);
+
+        // Rain particle material: use a URP-compatible particle shader so it renders
+        // translucent blue-gray instead of the magenta/pink that Unity's built-in
+        // Default-Particle material produces under URP (wrong render pipeline path).
+        Shader particleShader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
+        if (particleShader == null) particleShader = Shader.Find("Sprites/Default");
+        if (particleShader == null) particleShader = Shader.Find("Unlit/Color");
+        _particleMaterial = particleShader != null ? new Material(particleShader) : null;
+        if (_particleMaterial != null)
+            _particleMaterial.color = new Color(0.55f, 0.75f, 0.95f, 0.7f);
     }
 
     void Awake()
@@ -280,10 +291,11 @@ public class StormVisualManager : MonoBehaviour
         renderer.lengthScale = 1.2f;
         renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
-        // Don't override the particle renderer material — Unity's default particle
-        // material works out of the box and is guaranteed to exist. Custom shader
-        // lookup at runtime is fragile (shader stripping, URP path differences).
-        // The default is additive-ish translucent white, which reads fine as rain.
+        // Apply URP-compatible particle material (built in Init). The built-in
+        // Default-Particle material renders magenta/pink under URP, so we must
+        // explicitly assign one that uses a URP particle shader.
+        if (_particleMaterial != null)
+            renderer.sharedMaterial = _particleMaterial;
     }
 
     // TODO wind visualization: sample WindManager.GetWind at ~20 surface positions and draw
