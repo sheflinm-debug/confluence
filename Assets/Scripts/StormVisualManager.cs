@@ -17,9 +17,9 @@ public class StormVisualManager : MonoBehaviour
     // Enough to clear volcanic peaks while still reading as "on the surface."
     private const float OverlayShellOffset = 0.2f;
 
-    // Max alpha at full storm intensity. Darker so cloud shadows are clearly visible
-    // against the terrain even at a distance (raised from 0.42).
-    private const float MaxOverlayAlpha = 0.65f;
+    // Max alpha at full storm intensity. Clouds are white/light-gray; lower max alpha
+    // so they read as translucent clouds, not opaque black patches.
+    private const float MaxOverlayAlpha = 0.55f;
 
     // How fast the per-storm alpha fades in/out (units per second).
     private const float AlphaFadeSpeed = 0.35f;
@@ -169,8 +169,9 @@ public class StormVisualManager : MonoBehaviour
         var unitVerts = _tectonics.UnitVerts;
         var triangles = _tectonics.Triangles;
 
-        // Cloud shadow color: dark gray-blue. Alpha baked per-vertex (falloff * current alpha).
-        const float r = 0.16f, g = 0.20f, b = 0.34f;
+        // Cloud color: light gray-white with a faint blue tint, like real clouds seen from
+        // orbit. The previous dark gray-blue made clouds look like black holes in the terrain.
+        const float r = 0.88f, g = 0.90f, b = 0.95f;
 
         Vector3 stormNormal = (storm.Position - _planetCenter).normalized;
 
@@ -228,11 +229,12 @@ public class StormVisualManager : MonoBehaviour
     {
         var storm = visual.Storm;
 
-        // Position emitter slightly above surface. Orient the GO so the disc (XY plane
-        // of local space) lies flat on the surface — Z axis points outward. With
-        // startSpeed=0, particles appear within this flat disc and fall purely from force.
+        // Raise emitter 1.5 units above surface so drops have visible fall distance
+        // before reaching the terrain. At inward force=10, a drop travels ~1.0 units
+        // in 0.45 s (the max lifetime) — just enough to see motion without clipping.
         Vector3 outward = (storm.Position - _planetCenter).normalized;
-        visual.ParticleGo.transform.position = storm.Position + outward * 0.3f;
+        visual.ParticleGo.transform.position = storm.Position + outward * 1.5f;
+        // Orient GO so the flat disc (XY plane) is parallel to the surface.
         Vector3 discUp = Mathf.Abs(Vector3.Dot(outward, Vector3.up)) < 0.99f ? Vector3.up : Vector3.forward;
         visual.ParticleGo.transform.rotation = Quaternion.LookRotation(outward, discUp);
 
@@ -247,25 +249,27 @@ public class StormVisualManager : MonoBehaviour
         // Updated each tick so it tracks the storm as it drifts around the sphere.
         Vector3 inward = -outward;
         var force = visual.Particles.forceOverLifetime;
-        // Strong inward force is the only thing moving particles — needs to be large
-        // enough to produce visible motion within the short lifetime (0.5–1.0 s).
-        force.x = new ParticleSystem.MinMaxCurve(inward.x * 20f);
-        force.y = new ParticleSystem.MinMaxCurve(inward.y * 20f);
-        force.z = new ParticleSystem.MinMaxCurve(inward.z * 20f);
+        // Moderate inward force: drops fall 1.0 units in 0.45 s at this acceleration,
+        // enough to show visible rainfall motion without blasting through the terrain.
+        force.x = new ParticleSystem.MinMaxCurve(inward.x * 10f);
+        force.y = new ParticleSystem.MinMaxCurve(inward.y * 10f);
+        force.z = new ParticleSystem.MinMaxCurve(inward.z * 10f);
     }
 
     private void ConfigureParticleSystem(ParticleSystem ps, WeatherManager.StormCell storm)
     {
-        // Main: rain drops that fall purely due to forceOverLifetime (no initial speed).
-        // startSpeed=0 avoids the starburst/stalk effect where each particle's initial
-        // velocity gets stretched by the Stretch renderer into a long diverging line from
-        // the emitter center. With zero initial speed, particles simply appear in the disc
-        // area and accelerate inward as gravity-driven rain.
+        // Rain drops: spawn above the storm and fall inward under forceOverLifetime.
+        // Billboard mode (not Stretch) avoids the starburst artifact caused by
+        // orientation-based elongation, and keeps particles as stable dots/blobs
+        // visible from orbit (~90 units). Lifetime kept short so drops die before
+        // penetrating the terrain mesh (Unity particles have no surface collision).
         var main = ps.main;
-        main.maxParticles = 200;
-        main.startLifetime = new ParticleSystem.MinMaxCurve(0.5f, 1.0f);
+        main.maxParticles = 150;
+        main.startLifetime = new ParticleSystem.MinMaxCurve(0.35f, 0.55f);
         main.startSpeed = 0f;
-        main.startSize = new ParticleSystem.MinMaxCurve(0.08f, 0.16f);
+        // Large enough to see as distinct rain at orbit distance; smaller than the
+        // clouds so rain reads as "under the cloud", not "is the cloud".
+        main.startSize = new ParticleSystem.MinMaxCurve(0.20f, 0.35f);
         main.startColor = new ParticleSystem.MinMaxGradient(
             new Color(0.55f, 0.70f, 0.95f, 0.60f),
             new Color(0.80f, 0.90f, 1.0f, 0.90f));
@@ -292,11 +296,10 @@ public class StormVisualManager : MonoBehaviour
         force.enabled = true;
         force.space = ParticleSystemSimulationSpace.World;
 
-        // Stretch particles along velocity into long narrow rain streaks.
+        // Billboard mode: particles always face the camera, giving stable visible blobs
+        // rather than the orientation-dependent streaks Stretch produces at orbit distance.
         var renderer = ps.GetComponent<ParticleSystemRenderer>();
-        renderer.renderMode = ParticleSystemRenderMode.Stretch;
-        renderer.velocityScale = 0.30f;  // scale with actual velocity
-        renderer.lengthScale = 4.5f;     // additional fixed elongation
+        renderer.renderMode = ParticleSystemRenderMode.Billboard;
         renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
         // Apply URP-compatible particle material (built in Init). The built-in
