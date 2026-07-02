@@ -9,13 +9,17 @@ using UnityEngine;
 ///      TectonicPlanetGenerator.BuildVertexAdjacency), using the identical degree-normalized
 ///      Jacobi-style transfer pattern as ApplyThermalErosion so it can't blow up the same way
 ///      an un-normalized diffusion step did there.
-///   2. Evaporation/precipitation: liquid evaporates off wet vertices faster on the day side
-///      (DayNightCycle.SolarExposure) and at higher PlanetTemperature.CurrentK, accumulating
-///      into a single global "atmospheric moisture" reservoir (no real cloud transport - out
-///      of scope per the task). The reservoir precipitates back down stochastically, biased
-///      toward vertices that are already wet (or adjacent to wet vertices) so deserts don't
-///      get random ocean spawns but existing lakes/seas get rain back.
-///   3. Mesh rebuild: PlanetTileMesh.BuildLiquidShellDataFromVolume re-derives the translucent
+///   2. Evaporation/precipitation: driven by Clausius-Clapeyron vapor pressure rather than
+///      abstract rates. VaporPressureAt(T) / P_surface gives the thermodynamic evaporation
+///      multiplier; near zero for cold stable liquids, >1 when boiling. Per-vertex temperature
+///      is derived from PlanetTemperature.CurrentK ± latitudinalDeltaK * SolarExposure so
+///      polar/night-side vertices can freeze while equatorial ones stay liquid.
+///   3. Condensation: gases whose partial pressure exceeds their vapor pressure at the current
+///      temperature condense back into liquid (dew-point calculation, Clausius-Clapeyron
+///      inverted). Modifies AtmosphereManager gas fractions directly.
+///   4. Melting/Freezing: minerals with a MeltingPointK drain richness → liquid volume when
+///      T > MeltingPointK, and rebuild richness from liquid when T drops back below it.
+///   5. Mesh rebuild: PlanetTileMesh.BuildLiquidShellDataFromVolume re-derives the translucent
 ///      liquid shell mesh from current per-vertex volume on its own (coarser) timer.
 ///
 /// Gameplay code can query current liquid depth at a world position via
@@ -33,15 +37,13 @@ public class FluidDynamicsManager : MonoBehaviour
     [Tooltip("Fraction of the over-threshold volume difference transferred per tick, divided by vertex degree for stability (same normalization as ApplyThermalErosion).")]
     public float flowTransferRate = 0.5f;
 
-    [Header("Evaporation")]
-    [Tooltip("Base evaporation rate (volume/sec) drawn from every wet vertex regardless of conditions.")]
+    [Header("Evaporation (Clausius-Clapeyron)")]
+    [Tooltip("Absolute evaporation rate (volume/sec) at the thermodynamic boiling point, i.e. when P_vap == P_surface. Scales up when boiling, toward zero when cold.")]
     public float baseEvaporationRate = 0.0008f;
-    [Tooltip("Extra evaporation rate (volume/sec) at full day-side solar exposure (SolarExposure == 1).")]
+    [Tooltip("Extra evaporation rate (volume/sec) added at full day-side solar exposure, scaled by the same vapor-pressure multiplier so it also vanishes at low temperatures.")]
     public float solarEvaporationRate = 0.0025f;
-    [Tooltip("Extra evaporation rate (volume/sec) per Kelvin above this reference temperature.")]
-    public float temperatureReferenceK = 280f;
-    [Tooltip("Evaporation rate added per Kelvin above temperatureReferenceK.")]
-    public float evaporationPerDegreeK = 0.00004f;
+    [Tooltip("Maximum multiplier applied to baseEvaporationRate when boiling (P_vap >> P_surface). Caps runaway evaporation on very hot worlds.")]
+    public float boilMultiplier = 8f;
 
     [Header("Precipitation")]
     [Tooltip("Fraction of the global moisture reservoir that precipitates back down per second.")]
@@ -50,6 +52,24 @@ public class FluidDynamicsManager : MonoBehaviour
     [Range(0f, 1f)] public float wetBias = 0.85f;
     [Tooltip("Number of candidate vertices sampled per precipitation tick before weighting by wetBias.")]
     public int precipitationCandidatesPerTick = 24;
+
+    [Header("Condensation (gas → liquid)")]
+    [Tooltip("Fraction of a gas's atmospheric fraction removed per Kelvin below its dew point per second.")]
+    public float condensationRatePerK = 0.0005f;
+    [Tooltip("How much liquid volume one unit of condensed gas fraction produces. Tune so rain events are visually significant but don't flood the planet instantly.")]
+    public float condensationToLiquidScale = 0.05f;
+
+    [Header("Melting / Freezing")]
+    [Tooltip("Fraction of mineral richness converted to liquid per Kelvin above the mineral's melting point per second.")]
+    public float meltRatePerK = 0.001f;
+    [Tooltip("How much liquid volume one unit of melted mineral richness produces.")]
+    public float meltToLiquidVolumeScale = 0.3f;
+    [Tooltip("Fraction of excess liquid volume refrozen back into mineral richness per Kelvin below the melting point per second.")]
+    public float freezeRatePerK = 0.0008f;
+
+    [Header("Spatial temperature variation")]
+    [Tooltip("Half the pole-to-equator temperature difference in Kelvin. At 40K (Earth-like), equatorial vertices are +40K above mean and polar vertices are -40K. Drives ice caps and equatorial boiling zones.")]
+    public float latitudinalDeltaK = 40f;
 
     [Header("Mesh rebuild")]
     [Tooltip("Seconds between liquid shell mesh rebuilds - independent of (and coarser than) the flow tick.")]
@@ -63,10 +83,13 @@ public class FluidDynamicsManager : MonoBehaviour
     private float _radius;
     private float _elevationWorldScale;
     private LiquidDef _liquid;
+    public LiquidDef CurrentLiquid => _liquid;
     private System.Func<float> _getLiquidTempK;
     private DayNightCycle _dayNight;
     private Vector3 _planetCenter;
     private TidalForceManager _tidal;
+    private MineralDepositLayer _mineralLayer;
+    private IReadOnlyList<GasDefinition> _gases;
 
     /// The liquid's current vertex color (temperature-evaluated). StormVisualManager reads
     /// this to tint rain particles so they match the fluid on the ground.
@@ -85,6 +108,9 @@ public class FluidDynamicsManager : MonoBehaviour
     private float _lerpDuration;
 
     private float _moistureReservoir;
+
+    // Three fixed great-circle directions for ocean wave superposition (set once in Init).
+    private Vector3[] _waveDirections;
     private float _flowTickTimer;
 
     /// Wires up the live simulation using the SAME tectonics/seaLevel/liquid data the genesis
@@ -127,16 +153,56 @@ public class FluidDynamicsManager : MonoBehaviour
             }
         }
 
+        // Share the live volume array with ClimateManager so ocean-proximity moisture
+        // queries always reflect the current fluid state without a per-frame copy.
+        ClimateManager.SetLiquidVolume(_liquidVolume);
+
         _prevVolume = new float[n];
         _targetVolume = (float[])_liquidVolume.Clone();
         _displayVolume = (float[])_liquidVolume.Clone();
         _lerpT = 1f;
         _lerpDuration = flowTickInterval;
 
+        // Derive flow parameters from liquid's physical identity.
+        // Surface tension (mN/m) scales flowMaxSlope: high tension (water 72) holds steeper
+        // slopes before flowing; low tension (methane 14) spreads almost flat.
+        // Range 14-72 → flowMaxSlope 0.003-0.05 (linear).
+        if (liquid != null)
+        {
+            flowMaxSlope = Mathf.Lerp(0.003f, 0.05f,
+                Mathf.InverseLerp(14f, 72f, liquid.SurfaceTensionMNm));
+
+            // Viscosity (mPa·s) scales flowTransferRate on a log scale so the enormous
+            // molten-sulfur outlier (1500) doesn't collapse the water/ammonia/methane range.
+            // Higher viscosity → lower transfer rate (slower redistribution per tick).
+            // Water=0.5, Ammonia≈0.54, Methane≈0.58, MoltenSulfur≈0.04.
+            float logVisc = Mathf.Log(Mathf.Max(liquid.ViscosityMPas, 0.01f));
+            float viscT = Mathf.InverseLerp(Mathf.Log(0.18f), Mathf.Log(1500f), logVisc);
+            flowTransferRate = Mathf.Lerp(0.58f, 0.04f, viscT);
+        }
+
         _flowTickTimer = 0f;
         _moistureReservoir = 0f;
+
+        // Evenly-spread wave directions: three points on the unit sphere separated by
+        // ~120° to avoid axis-aligned grid artifacts in the wave pattern.
+        _waveDirections = new[]
+        {
+            new Vector3(1f,       0f,       0f).normalized,
+            new Vector3(-0.5f,    0.866f,   0f).normalized,
+            new Vector3(-0.5f,   -0.433f,   0.75f).normalized,
+        };
         enabled = liquid != null; // nothing to simulate on a dry world
     }
+
+    /// Called after Init() once the mineral deposit layer is available from world-gen.
+    /// Provides the melt/freeze simulation with per-vertex deposit data.
+    public void SetMineralLayer(MineralDepositLayer layer) => _mineralLayer = layer;
+
+    /// Called after Init() to provide the live gas list from AtmosphereManager.
+    /// FluidDynamicsManager holds the same list reference, so condensation fraction
+    /// changes are visible to AtmosphereManager's next Update() normalization pass.
+    public void SetGases(IReadOnlyList<GasDefinition> gases) => _gases = gases;
 
     void Awake() => Instance = this;
 
@@ -155,6 +221,8 @@ public class FluidDynamicsManager : MonoBehaviour
             System.Array.Copy(_liquidVolume, _prevVolume, _liquidVolume.Length);
             StepFlow();
             StepEvaporationAndPrecipitation(tickDt);
+            StepCondensation(tickDt);
+            StepMeltingAndFreezing(tickDt);
             System.Array.Copy(_liquidVolume, _targetVolume, _liquidVolume.Length);
             _lerpT = 0f;
         }
@@ -206,29 +274,50 @@ public class FluidDynamicsManager : MonoBehaviour
         for (int v = 0; v < n; v++) _liquidVolume[v] = Mathf.Max(0f, next[v]);
     }
 
-    /// Evaporates volume off wet vertices into the global moisture reservoir, biased by solar
-    /// exposure and surface temperature, then precipitates a fraction of the reservoir back
-    /// down onto a wet-biased random sample of vertices.
+    /// Per-vertex effective temperature: global mean ± latitudinal gradient driven by
+    /// solar exposure. Equatorial day-side vertices run hotter than mean; polar/night
+    /// vertices run colder. This drives spatially-varying phase transitions (ice caps,
+    /// equatorial boiling zones) without a full per-vertex climate simulation.
+    private float VertexTempK(int v)
+    {
+        float meanK = PlanetTemperature.Instance != null ? PlanetTemperature.Instance.CurrentK : 280f;
+        if (_dayNight == null) return meanK;
+        float solar = _dayNight.SolarExposure(_tectonics.UnitVerts[v]); // 0=night/pole, 1=day/equator
+        return meanK + (solar - 0.5f) * 2f * latitudinalDeltaK;
+    }
+
+    /// Clausius-Clapeyron vapor pressure evaporation. Replaces the former abstract
+    /// baseEvaporationRate + linear-temperature-coefficient model. The vapor-pressure
+    /// ratio P_vap(T)/P_surface drives the evaporation multiplier: near zero when the
+    /// liquid is cold and stable, 1x at the boiling point, up to boilMultiplier when
+    /// the temperature exceeds the boiling point (active boiling).
     private void StepEvaporationAndPrecipitation(float dt)
     {
         int n = _liquidVolume.Length;
-        float tempK = PlanetTemperature.Instance != null ? PlanetTemperature.Instance.CurrentK : temperatureReferenceK;
-        float tempExcess = Mathf.Max(0f, tempK - temperatureReferenceK);
+        float pressureBar = AtmosphereManager.Instance != null ? AtmosphereManager.Instance.PressureBar : 1f;
 
         for (int v = 0; v < n; v++)
         {
             if (_liquidVolume[v] <= 0f) continue;
 
+            float tempK    = VertexTempK(v);
+            float pVap     = _liquid.VaporPressureAt(tempK);
+            float vaporRatio = pressureBar > 0f ? pVap / pressureBar : 1f;
+            // At ratio=0 (very cold): no evaporation.
+            // At ratio=1 (boiling point): baseEvaporationRate applies.
+            // At ratio>>1 (boiling): rate caps at boilMultiplier * baseEvaporationRate.
+            float thermalRate = baseEvaporationRate * Mathf.Clamp(vaporRatio, 0f, boilMultiplier);
+
             float solar = 0.5f;
             if (_dayNight != null)
-            {
-                Vector3 normal = _tectonics.UnitVerts[v]; // unit vert IS the surface normal direction from planet center
-                solar = _dayNight.SolarExposure(normal);
-            }
+                solar = _dayNight.SolarExposure(_tectonics.UnitVerts[v]);
 
-            float rate = baseEvaporationRate + solar * solarEvaporationRate + tempExcess * evaporationPerDegreeK;
+            // Solar contribution additive, but also scaled by vaporRatio so it vanishes
+            // at very low temperatures (no point evaporating a frozen surface in sunlight).
+            float rate = thermalRate + solar * solarEvaporationRate * Mathf.Clamp01(vaporRatio * 2f);
+
             float evaporated = Mathf.Min(_liquidVolume[v], rate * dt);
-            _liquidVolume[v] -= evaporated;
+            _liquidVolume[v]  -= evaporated;
             _moistureReservoir += evaporated;
         }
 
@@ -241,27 +330,130 @@ public class FluidDynamicsManager : MonoBehaviour
         DistributePrecipitation(toPrecipitate);
     }
 
-    /// Sample a handful of candidate vertices, weight them toward ones that are already wet
-    /// (or directly adjacent to a wet vertex), and rain the precipitation budget onto the
-    /// single best-weighted candidate each call. Keeps existing lakes/seas topped up while
-    /// keeping deserts dry except for the occasional unbiased drop (wetBias < 1).
+    /// Dew-point condensation: for each gas that can condense into this world's liquid,
+    /// compute the dew-point temperature from the gas's partial pressure using the
+    /// Clausius-Clapeyron equation. If CurrentK < T_dew, a fraction of the gas condenses
+    /// and is added to the moisture reservoir (which DistributePrecipitation delivers back
+    /// to the surface). Modifies GasDefinition.Fraction directly; AtmosphereManager's own
+    /// Update() will normalize fractions on the next frame.
+    private void StepCondensation(float dt)
+    {
+        if (_gases == null || AtmosphereManager.Instance == null) return;
+
+        float tempK      = PlanetTemperature.Instance != null ? PlanetTemperature.Instance.CurrentK : 280f;
+        float pressureBar = AtmosphereManager.Instance.PressureBar;
+
+        foreach (var gas in _gases)
+        {
+            if (gas.CondensesTo == null)                          continue;
+            if (gas.CondensesTo.Value != _liquid.Kind)            continue; // only condense into this world's liquid
+            if (gas.Fraction          <= 0f)                      continue;
+            if (gas.CondensationBoilingK <= 0f)                   continue;
+
+            float partialPressure = gas.Fraction * pressureBar;
+            if (partialPressure <= 0f) continue;
+
+            // Clausius-Clapeyron inverted: T_dew = 1 / (1/T_boil − ln(P_partial) / (ΔHvap/R))
+            // Where P_partial is in bar and P_ref = 1 bar.
+            float logPartial = Mathf.Log(partialPressure);
+            float invTDew    = 1f / gas.CondensationBoilingK - logPartial / gas.CondensationDHvapOverR;
+            if (invTDew <= 0f) continue; // numerical guard (should never happen in sim range)
+            float tDew = 1f / invTDew;
+
+            if (tempK >= tDew) continue; // above dew point — no condensation
+
+            float dewDeficit       = tDew - tempK; // Kelvin below dew point
+            float condensedFraction = Mathf.Min(gas.Fraction, condensationRatePerK * dewDeficit * dt);
+            gas.Fraction = Mathf.Max(0f, gas.Fraction - condensedFraction);
+
+            _moistureReservoir += condensedFraction * condensationToLiquidScale;
+        }
+    }
+
+    /// Mineral melting and freezing. For each vertex with a meltable mineral deposit whose
+    /// MeltsToLiquid matches this world's liquid kind:
+    ///  - If vertex temperature > MeltingPointK: drain RuntimeRichness → liquid volume.
+    ///  - If vertex temperature < MeltingPointK and liquid is present: refreeze liquid → richness.
+    /// Sublimation (solid → gas) is handled here too for minerals that have SublimationPointK set.
+    private void StepMeltingAndFreezing(float dt)
+    {
+        if (_mineralLayer == null || _liquid == null) return;
+
+        int n = Mathf.Min(_mineralLayer.ByVertex.Length, _liquidVolume.Length);
+
+        for (int v = 0; v < n; v++)
+        {
+            VertexDeposit deposit = _mineralLayer.ByVertex[v];
+            if (deposit == null || deposit.Mineral == null) continue;
+
+            MineralDef mineral = deposit.Mineral;
+
+            // --- Sublimation (solid → gas, skips liquid phase) ---
+            if (mineral.SublimationPointK.HasValue && mineral.SublimatesTo != null &&
+                AtmosphereManager.Instance != null)
+            {
+                float subT = VertexTempK(v);
+                if (subT > mineral.SublimationPointK.Value && _mineralLayer.RuntimeRichness[v] > 0f)
+                {
+                    const float sublimationRate = 0.0003f;
+                    float sublimed = Mathf.Min(_mineralLayer.RuntimeRichness[v], sublimationRate * dt);
+                    _mineralLayer.RuntimeRichness[v] -= sublimed;
+                    const float sublimationGasScale = 0.002f;
+                    AtmosphereManager.Instance.AddGasFraction(mineral.SublimatesTo, sublimed * sublimationGasScale);
+                }
+            }
+
+            // --- Melting and freezing ---
+            if (!mineral.MeltingPointK.HasValue) continue;
+            if (mineral.MeltsToLiquid != _liquid.Kind) continue; // mineral melts into a different liquid than this world has
+
+            float meltK   = mineral.MeltingPointK.Value;
+            float richness = _mineralLayer.RuntimeRichness[v];
+            float vertexT = VertexTempK(v);
+
+            if (vertexT > meltK && richness > 0f)
+            {
+                float melted = Mathf.Min(richness, meltRatePerK * (vertexT - meltK) * dt);
+                _mineralLayer.RuntimeRichness[v] -= melted;
+                _liquidVolume[v] += melted * meltToLiquidVolumeScale;
+            }
+            else if (vertexT < meltK && _liquidVolume[v] > 0f && richness < deposit.Richness)
+            {
+                float frozen = Mathf.Min(_liquidVolume[v], freezeRatePerK * (meltK - vertexT) * dt);
+                _liquidVolume[v] -= frozen;
+                _mineralLayer.RuntimeRichness[v] = Mathf.Min(deposit.Richness,
+                    richness + frozen / Mathf.Max(meltToLiquidVolumeScale, 0.0001f));
+            }
+        }
+    }
+
+    /// Sample candidate vertices weighted toward wet/wet-adjacent ones and distribute
+    /// precipitation across ALL candidates proportionally rather than winner-take-all.
+    /// This prevents the entire tick's evaporation budget from crashing onto one vertex
+    /// (which StepFlow can't smooth fast enough, causing geometry spikes at extreme temps).
     private void DistributePrecipitation(float amount)
     {
         int n = _liquidVolume.Length;
         if (n == 0) return;
 
-        int bestVertex = -1;
-        float bestScore = -1f;
-
+        // Collect scored candidates.
+        var candidates = new (int vertex, float score)[precipitationCandidatesPerTick];
+        float totalScore = 0f;
         for (int i = 0; i < precipitationCandidatesPerTick; i++)
         {
             int candidate = Random.Range(0, n);
             float wetness = _liquidVolume[candidate] > 0f ? 1f : NeighborWetness(candidate);
-            float score = Mathf.Lerp(Random.value, wetness + Random.value * 0.01f, wetBias);
-            if (score > bestScore) { bestScore = score; bestVertex = candidate; }
+            float score = Mathf.Max(0.01f, Mathf.Lerp(Random.value, wetness + Random.value * 0.01f, wetBias));
+            candidates[i] = (candidate, score);
+            totalScore += score;
         }
 
-        if (bestVertex >= 0) _liquidVolume[bestVertex] += amount;
+        if (totalScore <= 0f) return;
+
+        // Spread rain proportionally across all candidates — no vertex gets more than
+        // its score-weighted share, so no single basin accumulates the whole budget.
+        for (int i = 0; i < precipitationCandidatesPerTick; i++)
+            _liquidVolume[candidates[i].vertex] += amount * (candidates[i].score / totalScore);
     }
 
     private float NeighborWetness(int vertex)
@@ -276,7 +468,7 @@ public class FluidDynamicsManager : MonoBehaviour
     {
         if (_liquidGo == null || _liquidMesh == null || _liquid == null) return;
 
-        float tempK = _getLiquidTempK != null ? _getLiquidTempK() : temperatureReferenceK;
+        float tempK = _getLiquidTempK != null ? _getLiquidTempK() : 280f;
         PlanetTileMesh.MeshData data = PlanetTileMesh.BuildLiquidShellDataFromVolume(
             _tectonics, _radius, _elevationWorldScale, _displayVolume, minVolumeToRender, _liquid, tempK);
 
@@ -303,6 +495,23 @@ public class FluidDynamicsManager : MonoBehaviour
             }
         }
 
+        // Wave animation: superposition of three sine waves in fixed world-space great-
+        // circle directions gives a natural rolling ocean swell visible from orbit.
+        // Amplitudes are small (≤0.05 wu = 0.25% of planet radius) so they don't
+        // conflict with tidal bulge or produce spikes near coastlines.
+        {
+            float t = Time.time;
+            var wd = _waveDirections;
+            for (int i = 0; i < data.Vertices.Length; i++)
+            {
+                Vector3 dir = data.Vertices[i].normalized;
+                float w = Mathf.Sin(Vector3.Dot(dir, wd[0]) * 11f + t * 0.55f) * 0.045f
+                        + Mathf.Sin(Vector3.Dot(dir, wd[1]) * 15f + t * 0.38f) * 0.028f
+                        + Mathf.Sin(Vector3.Dot(dir, wd[2]) * 8f  + t * 0.70f) * 0.035f;
+                data.Vertices[i] = dir * (data.Vertices[i].magnitude + w);
+            }
+        }
+
         _liquidMesh.Clear();
         _liquidMesh.indexFormat = data.Vertices.Length > 65000
             ? UnityEngine.Rendering.IndexFormat.UInt32
@@ -324,6 +533,26 @@ public class FluidDynamicsManager : MonoBehaviour
         return _liquidVolume[vertexIndex];
     }
 
+    /// Returns a copy of the current per-vertex liquid volume array. Used by
+    /// ChemicalNutrientPool.Init to seed nutrient density near submerged vertices.
+    public float[] GetLiquidVolumeSnapshot()
+    {
+        if (_liquidVolume == null) return null;
+        float[] copy = new float[_liquidVolume.Length];
+        System.Array.Copy(_liquidVolume, copy, _liquidVolume.Length);
+        return copy;
+    }
+
+    /// Fraction of surface vertices that have liquid above minVolumeToRender (0–1).
+    public float GetLiquidCoverageFraction()
+    {
+        if (_liquidVolume == null || _liquidVolume.Length == 0) return 0f;
+        int wet = 0;
+        for (int i = 0; i < _liquidVolume.Length; i++)
+            if (_liquidVolume[i] >= minVolumeToRender) wet++;
+        return (float)wet / _liquidVolume.Length;
+    }
+
     /// Liquid depth near an arbitrary world position, found via nearest unit-vertex lookup.
     /// O(n) linear scan - fine for occasional gameplay queries (e.g. one agent decision per
     /// frame) at ~15k vertices, but callers doing this every agent every frame should cache
@@ -342,5 +571,53 @@ public class FluidDynamicsManager : MonoBehaviour
             if (dot > bestDot) { bestDot = dot; best = v; }
         }
         return best >= 0 ? _liquidVolume[best] : 0f;
+    }
+
+    /// True when the nearest surface vertex has renderable liquid (depth ≥ minVolumeToRender).
+    public bool IsSubmerged(Vector3 worldPos)
+        => GetLiquidDepthNearPosition(worldPos) >= minVolumeToRender;
+
+    /// World-space tangent vector of the liquid current at worldPos, derived from the local
+    /// height-gradient (liquid flows from high combined-height toward low). Returns zero if
+    /// the position is dry or if the fluid is in equilibrium at that vertex.
+    /// Magnitude is scaled by the liquid's FlowSpeedFactor so high-viscosity liquids produce
+    /// weaker currents (molten sulfur ≈ 2% of water current speed).
+    public Vector3 GetLiquidCurrentAt(Vector3 worldPos)
+    {
+        if (_tectonics == null || _liquidVolume == null || _adjacency == null || _liquid == null)
+            return Vector3.zero;
+
+        Vector3 dir = (worldPos - _planetCenter).normalized;
+
+        // Find nearest vertex.
+        int best = -1;
+        float bestDot = -2f;
+        var verts = _tectonics.UnitVerts;
+        for (int v = 0; v < verts.Count; v++)
+        {
+            float dot = Vector3.Dot(dir, verts[v]);
+            if (dot > bestDot) { bestDot = dot; best = v; }
+        }
+        if (best < 0 || _liquidVolume[best] < minVolumeToRender) return Vector3.zero;
+
+        // Gradient-descent direction: weighted sum of downhill neighbor offsets.
+        float heightV = _tectonics.Elevation[best] + _liquidVolume[best];
+        Vector3 flowSum = Vector3.zero;
+        foreach (int nb in _adjacency[best])
+        {
+            float heightNb = _tectonics.Elevation[nb] + _liquidVolume[nb];
+            float diff = heightV - heightNb;
+            if (diff > flowMaxSlope)
+            {
+                Vector3 toNb = (verts[nb] - verts[best]);
+                flowSum += toNb.normalized * diff;
+            }
+        }
+
+        if (flowSum.sqrMagnitude < 0.0001f) return Vector3.zero;
+
+        // Project onto tangent plane and scale by liquid identity.
+        Vector3 tangent = (flowSum - Vector3.Dot(flowSum, dir) * dir).normalized;
+        return tangent * _liquid.FlowSpeedFactor;
     }
 }

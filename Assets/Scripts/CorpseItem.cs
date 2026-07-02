@@ -8,6 +8,9 @@ public class CorpseItem : MonoBehaviour
 {
     [HideInInspector] public CorpseSpawner spawner;
     public float decayTime = 12f;
+    /// Body mass of the original organism, set by AgentController on death. Used for
+    /// biomass-transfer calculation when a scavenger eats this corpse (spec §7).
+    public float BodyMass = 0.001f;
     private float _age;
 
     void Update()
@@ -21,5 +24,11 @@ public class CorpseItem : MonoBehaviour
         if (spawner != null) spawner.Unregister(this);
     }
 
-    public void Consume() => Destroy(gameObject);
+    /// Consume this corpse and return its body mass for biomass-transfer calculation.
+    public float Consume()
+    {
+        float mass = BodyMass;
+        Destroy(gameObject);
+        return mass;
+    }
 }

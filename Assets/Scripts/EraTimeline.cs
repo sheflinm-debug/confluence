@@ -44,7 +44,7 @@ public static class EraTimeline
         // animated vignettes (no GOE ocean-color shift, no Cambrian creature reveal).
         // That is the one piece of this spec intentionally deferred for a later pass.
         new EraPhase(Era1, "Abiogenesis", 45f, 4_000_000_000f, 3_900_000_000f),
-        new EraPhase(Era1, "Prokaryotic seas / long stasis", 60f, 3_900_000_000f, 2_400_000_000f),
+        new EraPhase(Era1, "Prokaryotic seas / long stasis", 90f, 3_900_000_000f, 2_400_000_000f),
         new EraPhase(Era1, "Great Oxidation Event", 30f, 2_400_000_000f, 2_000_000_000f),
         new EraPhase(Era1, "Eukaryotes", 30f, 2_000_000_000f, 1_200_000_000f),
         new EraPhase(Era1, "Multicellularity", 30f, 1_200_000_000f, 600_000_000f),

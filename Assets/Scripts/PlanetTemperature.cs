@@ -1,9 +1,9 @@
 using UnityEngine;
 
 /// Global mean surface temperature (Kelvin). Initialized within the rolled atmosphere
-/// type's stable band (atmosphere_generator_spec.docx Section 4), then drifts over time
-/// based on a simplified greenhouse-gas coupling: CO2/CH4/SO2 fraction raises the
-/// equilibrium target, everything else is neutral. Does not yet implement the full
+/// type's stable band (atmosphere_generator_spec.docx Section 4), then converges toward
+/// a radiative energy-balance equilibrium driven by stellar luminosity, orbital distance,
+/// and greenhouse-gas composition. Does not yet implement the full
 /// extreme-transition/reclassification cascade from Section 5 - flagged as follow-up.
 public class PlanetTemperature : MonoBehaviour
 {
@@ -13,15 +13,14 @@ public class PlanetTemperature : MonoBehaviour
     public float BandMinK { get; private set; }
     public float BandMaxK { get; private set; }
 
-    [Tooltip("How quickly CurrentK chases its greenhouse-driven target (K/sec).")]
+    [Tooltip("How quickly CurrentK chases its radiative-equilibrium target (K/sec).")]
     public float driftRate = 0.02f;
-    [Tooltip("How many K above BandMaxK the greenhouse target can climb at 100% greenhouse-gas fraction.")]
-    public float maxGreenhouseBoostK = 60f;
-
-    private static readonly string[] GreenhouseGases = { "CO2", "CH4", "SO2", "H2O" };
 
     [Tooltip("Chance the genesis roll lands inside the liquid-compatible sub-range when one exists, instead of the type's full band.")]
     public float liquidBiasChance = 0.75f;
+
+    private float _luminositySolar = 0f;
+    private float _orbitAU = 0f;
 
     public void Init(AtmosphereTypeDef type, LiquidDef liquidCandidate = null)
     {
@@ -44,20 +43,57 @@ public class PlanetTemperature : MonoBehaviour
         CurrentK = Mathf.Lerp(BandMinK, BandMaxK, Random.Range(0.35f, 0.65f));
     }
 
+    /// <summary>
+    /// Called by SimulationBootstrap after the solar system is generated.
+    /// Stores orbital parameters so Update() can derive a physics-based equilibrium temperature.
+    /// </summary>
+    public void SetOrbit(float luminositySolar, float orbitAU)
+    {
+        _luminositySolar = luminositySolar;
+        _orbitAU = orbitAU;
+
+        float T_eq = 278f * Mathf.Pow(_luminositySolar, 0.25f) / Mathf.Sqrt(Mathf.Max(_orbitAU, 0.001f));
+        Debug.Log($"[Temperature] T_eq={T_eq:F0}K at {orbitAU:F2}AU (L={luminositySolar:F2}L☉) — greenhouse will add ΔT based on atmosphere");
+    }
+
     void Awake() => Instance = this;
 
     void Update()
     {
-        if (AtmosphereManager.Instance == null) return;
+        float target;
 
-        float greenhouseFraction = 0f;
-        foreach (var gas in AtmosphereManager.Instance.Gases)
+        if (_luminositySolar <= 0f)
         {
-            foreach (var ghg in GreenhouseGases)
-                if (gas.Name.StartsWith(ghg)) { greenhouseFraction += gas.Fraction; break; }
+            // SetOrbit not yet called (cinematic/pre-bootstrap phase) — use band centre as fallback.
+            target = Mathf.Lerp(BandMinK, BandMaxK, 0.5f);
         }
+        else
+        {
+            // Radiative equilibrium: T_eq = 278 * L^0.25 / sqrt(d)
+            float T_eq = 278f * Mathf.Pow(_luminositySolar, 0.25f) / Mathf.Sqrt(Mathf.Max(_orbitAU, 0.001f));
 
-        float target = Mathf.Lerp(BandMinK, BandMaxK, 0.5f) + greenhouseFraction * maxGreenhouseBoostK;
+            // Greenhouse contribution: real gases that absorb IR
+            // CO2, CH4, SO2, H2O are greenhouse gases; their effect scales with fraction * pressure
+            float greenhouseDeltaK = 0f;
+            if (AtmosphereManager.Instance != null)
+            {
+                float pressureBar = AtmosphereManager.Instance.PressureBar;
+                foreach (var gas in AtmosphereManager.Instance.Gases)
+                {
+                    float ghStrength = gas.Name switch {
+                        "CO2" => 80f,
+                        "CH4" => 25f,
+                        "SO2" => 15f,
+                        "H2O" => 40f,
+                        "NH3" => 30f,
+                        _ => 0f
+                    };
+                    greenhouseDeltaK += ghStrength * gas.Fraction * Mathf.Sqrt(Mathf.Clamp(pressureBar, 0f, 10f));
+                }
+            }
+
+            target = T_eq + greenhouseDeltaK;
+        }
 
         // Layer the orbital seasonal flux swing (perihelion/aphelion) on top of the
         // greenhouse-driven target, additively - it oscillates around the same target
@@ -79,6 +115,7 @@ public class PlanetTemperature : MonoBehaviour
 
     void OnGUI()
     {
+        if (GameHUD.SuppressRawOverlays) return;
         GUI.Label(new Rect(10, 10, 300, 20), $"Surface temp: {CurrentK:F0} K (band {BandMinK:F0}-{BandMaxK:F0} K)");
         if (AtmosphereManager.Instance != null)
         {

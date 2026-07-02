@@ -27,10 +27,22 @@ public class AgentSpawner : MonoBehaviour
     {
         for (int c = 0; c < communityCount; c++)
         {
-            // originOverride lets the caller place the founding colony somewhere
-            // specific (e.g. inside a flooded liquid tile) instead of anywhere on the
-            // sphere - only meaningful for the first community when communityCount==1.
-            Vector3 origin = (c == 0 && originOverride.HasValue) ? originOverride.Value : SphereSurface.RandomPointOnSphere(planetCenter, planetRadius);
+            // When a wet origin is provided all communities start in or near the same
+            // liquid body — life originates from a single shared primordial soup, not
+            // from scattered independent abiogenesis events on a dry sphere.
+            // Each community gets a small angular offset so they don't stack exactly.
+            Vector3 origin;
+            if (originOverride.HasValue)
+            {
+                Vector3 randDir = SphereSurface.RandomPointOnSphere(planetCenter, planetRadius);
+                Vector3 baseDir = (originOverride.Value - planetCenter).normalized;
+                Vector3 offsetDir = Vector3.Slerp(baseDir, (randDir - planetCenter).normalized, 0.08f);
+                origin = planetCenter + offsetDir * planetRadius;
+            }
+            else
+            {
+                origin = SphereSurface.RandomPointOnSphere(planetCenter, planetRadius);
+            }
             float localTemp = ClimateManager.GetTemperature(origin);
             float localMoisture = ClimateManager.GetMoisture(origin);
 
@@ -44,9 +56,16 @@ public class AgentSpawner : MonoBehaviour
                 float tempPref = PopulationStats.SampleDimension(localTemp, preferenceVariance);
                 float moisturePref = PopulationStats.SampleDimension(localMoisture, preferenceVariance);
 
-                Vector3 position = SphereSurface.RandomPointOnSphere(planetCenter, planetRadius);
-                position = Vector3.Slerp((origin - planetCenter), (position - planetCenter), 0.05f) + planetCenter; // cluster near origin
+                // Cluster member within ~2° of community origin — tight enough to all start
+                // in the same liquid body, loose enough that they don't stack exactly.
+                Vector3 randDir = (SphereSurface.RandomPointOnSphere(planetCenter, planetRadius) - planetCenter).normalized;
+                Vector3 originDir = (origin - planetCenter).normalized;
+                Vector3 position = planetCenter + Vector3.Slerp(originDir, randDir, 0.02f) * planetRadius;
                 position = SphereSurface.ProjectToSurface(position, planetCenter, planetRadius);
+
+                // Founding organisms should stay near liquid — override moisture preference
+                // to strongly prefer wet terrain regardless of the local noise sample.
+                moisturePref = 85f;
 
                 Color founderColor = Color.HSVToRGB((float)i / memberCount, 0.75f, 0.95f);
                 SpawnAgent(vision, speed, strength, hardiness, tempPref, moisturePref, position, c, founderColor);
@@ -108,5 +127,26 @@ public class AgentSpawner : MonoBehaviour
     public void Unregister(AgentController agent)
     {
         ActiveAgents.Remove(agent);
+    }
+
+    void Update()
+    {
+        SolarSystemRuntime sr = SolarSystemRuntime.Instance;
+        if (sr == null || sr.planetRotationPeriodSeconds <= 0f) return;
+
+        float degPerSec = 360f / sr.planetRotationPeriodSeconds;
+        float deltaAngle = degPerSec * Time.deltaTime;
+        if (Mathf.Approximately(deltaAngle, 0f)) return;
+
+        // Co-rotate all agents with the planet's visual spin so they stay planted
+        // on the terrain rather than drifting as the mesh rotates under them.
+        Vector3 axis = WindManager.RotationAxis;
+        Quaternion rot = Quaternion.AngleAxis(deltaAngle, axis);
+        for (int i = ActiveAgents.Count - 1; i >= 0; i--)
+        {
+            AgentController a = ActiveAgents[i];
+            if (a == null) continue;
+            a.transform.position = planetCenter + rot * (a.transform.position - planetCenter);
+        }
     }
 }

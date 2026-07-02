@@ -69,7 +69,7 @@ public class DeepTimeClock : MonoBehaviour
     {
         string caption;
         if (_running) caption = CurrentCaption();
-        else if (_finished) caption = "Era 2: Complex Life & Hominins — not yet implemented; simulation continues";
+        else if (_finished) caption = "Era 2: Age of Intelligence — simulation continues";
         else return;
 
         GUIStyle style = new GUIStyle(GUI.skin.label) { fontSize = 16, alignment = TextAnchor.MiddleCenter };

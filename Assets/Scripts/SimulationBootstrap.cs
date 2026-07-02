@@ -25,7 +25,7 @@ public class SimulationBootstrap : MonoBehaviour
     public int plateCount = 10;
     [Tooltip("Graph-distance (in mesh hops) over which a boundary's elevation effect falls off.")]
     public float boundaryInfluence = 10f;
-    public float noiseAmplitude = 0.25f;
+    public float noiseAmplitude = 0.35f;
     public int volcanoCount = 6;
     public float volcanoAmplitude = 0.5f;
     public int erosionIterations = 6;
@@ -36,7 +36,7 @@ public class SimulationBootstrap : MonoBehaviour
 
     [Header("Liquid (pools into the lowest terrain up to this elevation percentile)")]
     public bool enableLiquid = true;
-    [Range(0f, 1f)] public float seaLevelPercentile = 0.35f;
+    [Range(0f, 1f)] public float seaLevelPercentile = 0.45f;
 
     [Header("Fluid Dynamics (live flow/evaporation/precipitation simulation after genesis)")]
     [Tooltip("If false, the liquid shell stays exactly as the genesis flood-fill left it (old static behavior).")]
@@ -51,10 +51,6 @@ public class SimulationBootstrap : MonoBehaviour
     public float fluidBaseEvaporationRate = 0.0008f;
     [Tooltip("Extra evaporation rate (volume/sec) at full day-side solar exposure.")]
     public float fluidSolarEvaporationRate = 0.0025f;
-    [Tooltip("Reference temperature (K) above which extra evaporation kicks in.")]
-    public float fluidTemperatureReferenceK = 280f;
-    [Tooltip("Evaporation rate added per Kelvin above fluidTemperatureReferenceK.")]
-    public float fluidEvaporationPerDegreeK = 0.00004f;
     [Tooltip("Fraction of the global moisture reservoir that precipitates back down per second.")]
     public float fluidPrecipitationRate = 0.02f;
     [Range(0f, 1f)] [Tooltip("How strongly precipitation favors already-wet (or wet-adjacent) vertices over arbitrary dry ones.")]
@@ -96,10 +92,45 @@ public class SimulationBootstrap : MonoBehaviour
     public GameObject agentPrefab;
     public GameObject corpsePrefab;
 
+    [Header("Menu (set true to defer start until MainMenuManager calls BeginSimulation)")]
+    public bool waitForMenu = true;
+
     private Vector3 _center;
+    private bool _started;
+
+    void Awake()
+    {
+        if (waitForMenu && GetComponent<MainMenuManager>() == null)
+            gameObject.AddComponent<MainMenuManager>();
+    }
 
     void Start()
     {
+        if (waitForMenu) return; // MainMenuManager will call BeginSimulation() when ready
+        RunBootstrap(PlanetConfig.Default());
+    }
+
+    /// Called by MainMenuManager once the player has configured their world.
+    public void BeginSimulation(PlanetConfig config)
+    {
+        if (_started) return;
+        ApplyConfig(config);
+        RunBootstrap(config);
+    }
+
+    private void ApplyConfig(PlanetConfig config)
+    {
+        Random.InitState(config.worldSeed);
+        plateCount          = config.PlateCount;
+        noiseAmplitude      = config.NoiseAmplitude;
+        boundaryInfluence   = config.BoundaryInfluence;
+        volcanoCount        = config.VolcanoCount;
+        seaLevelPercentile  = config.SeaLevelPercentile;
+    }
+
+    private void RunBootstrap(PlanetConfig config)
+    {
+        _started = true;
         _center = transform.position;
         PopulationStats.Reset();
 
@@ -144,6 +175,7 @@ public class SimulationBootstrap : MonoBehaviour
 
         GeneCatalog.BuildDefault();
         gameObject.AddComponent<GeneEvolutionManager>();
+        GeneEvolutionManager.SetSpawner(agentSpawner);
 
         DayNightCycle dayNight = gameObject.AddComponent<DayNightCycle>();
 
@@ -154,17 +186,37 @@ public class SimulationBootstrap : MonoBehaviour
         // snapshots the now-real atmosphere as its genesis "ideal mix").
         RockArchetypeDef archetype = RockArchetypeTable.Roll();
 
+        PlanetGravity gravity = gameObject.AddComponent<PlanetGravity>();
+        gravity.Init(archetype);
+
         AtmosphereManager atmosphere = gameObject.AddComponent<AtmosphereManager>();
         atmosphere.Init(agentSpawner, dayNight, archetype);
 
+        // Primary candidate from atmosphere type. If the type has no liquid chemistry
+        // (e.g. Thin exosphere, Carbon-rich at wrong temperature), fall back to whichever
+        // liquid is most plausible for the planet's temperature — the life planet should
+        // always have surface liquid so the player has geology to observe.
         LiquidDef liquidCandidate = enableLiquid ? LiquidChemistry.GetCandidate(atmosphere.RolledType) : null;
+        if (liquidCandidate == null && enableLiquid)
+            liquidCandidate = LiquidChemistry.BestForTemperature(
+                Mathf.Lerp(atmosphere.RolledType.TempMinK, atmosphere.RolledType.TempMaxK, 0.5f),
+                atmosphere.PressureBar);
 
         PlanetTemperature temperature = gameObject.AddComponent<PlanetTemperature>();
         temperature.Init(atmosphere.RolledType, liquidCandidate);
 
-        LiquidDef liquid = liquidCandidate != null ? LiquidChemistry.Determine(atmosphere.RolledType, temperature.CurrentK) : null;
+        // Try the atmosphere-implied liquid first; if temperature missed the window use
+        // the temperature-based best match (covers "Carbon-rich at 400K" → null Hydrocarbon case).
+        LiquidDef liquid = liquidCandidate != null
+            ? (LiquidChemistry.Determine(atmosphere.RolledType, temperature.CurrentK, atmosphere.PressureBar)
+               ?? (temperature.CurrentK >= liquidCandidate.MinK && temperature.CurrentK <= liquidCandidate.BoilingPointAtPressureK(atmosphere.PressureBar)
+                   ? liquidCandidate : LiquidChemistry.BestForTemperature(temperature.CurrentK, atmosphere.PressureBar)))
+            : null;
+        Debug.Log($"[Liquid] atmo={atmosphere.RolledType.Name} tempK={temperature.CurrentK:F0} candidate={liquidCandidate?.Name ?? "none"} liquid={liquid?.Name ?? "NONE — no liquid this world"}");
+        if (liquid == null) Debug.LogWarning("[Liquid] No liquid selected — planet will have no surface ocean.");
 
         SolarSystemDef solarSystem = StarSystemGenerator.Generate(temperature.CurrentK);
+        temperature.SetOrbit(solarSystem.Star.LuminositySolar, solarSystem.LifePlanetOrbitAU);
 
         // Eccentricity/axial tilt are rolled now (alongside the rest of world gen) but
         // OrbitalSeasons doesn't start ticking the seasonal cycle until BeginGameplay()
@@ -178,7 +230,16 @@ public class SimulationBootstrap : MonoBehaviour
             noiseAmplitude, volcanoCount, volcanoAmplitude,
             erosionIterations, erosionMaxSlope, erosionTransferRate);
 
+        // Wire terrain into climate system so orographic effects and ocean proximity work.
+        {
+            var adj = TectonicPlanetGenerator.BuildVertexAdjacency(tectonics.UnitVerts.Count, tectonics.Triangles);
+            ClimateManager.SetTerrain(tectonics.UnitVerts, tectonics.Elevation, adj);
+        }
+
         float seaLevel = liquid != null ? PlanetTileMesh.ComputeSeaLevel(tectonics, seaLevelPercentile) : float.NegativeInfinity;
+
+        // UV intensity from star type; ozone builds up over time via AtmosphereManager.
+        UVManager.Init(solarSystem.Star.LuminositySolar);
 
         Debug.Log($"[World] Star: {solarSystem.Star.SpectralClass}-class @ {solarSystem.LifePlanetOrbitAU:F2} AU " +
             $"(e={solarSystem.LifePlanetEccentricity:F2}, tilt={solarSystem.LifePlanetAxialTiltDeg:F0} deg) | " +
@@ -260,20 +321,19 @@ public class SimulationBootstrap : MonoBehaviour
                 // static flood-fill: per-vertex liquid volume now flows via mesh adjacency,
                 // evaporates/precipitates over time, and rebuilds the same liquid shell
                 // GameObject/mesh GenesisCinematic created (no duplicate visual object).
+                FluidDynamicsManager fluid = null;
                 if (enableFluidDynamics && cinematic.HasLiquid && liquid != null)
                 {
                     if (tidal != null) tidal.OwnedByFluidDynamics = true;
 
                     GameObject fluidGo = new GameObject("FluidDynamicsManager");
                     fluidGo.transform.SetParent(transform);
-                    FluidDynamicsManager fluid = fluidGo.AddComponent<FluidDynamicsManager>();
+                    fluid = fluidGo.AddComponent<FluidDynamicsManager>();
                     fluid.flowTickInterval = fluidFlowTickInterval;
                     fluid.flowMaxSlope = fluidFlowMaxSlope;
                     fluid.flowTransferRate = fluidFlowTransferRate;
                     fluid.baseEvaporationRate = fluidBaseEvaporationRate;
                     fluid.solarEvaporationRate = fluidSolarEvaporationRate;
-                    fluid.temperatureReferenceK = fluidTemperatureReferenceK;
-                    fluid.evaporationPerDegreeK = fluidEvaporationPerDegreeK;
                     fluid.precipitationRate = fluidPrecipitationRate;
                     fluid.wetBias = fluidWetBias;
                     fluid.meshRebuildInterval = fluidMeshRebuildInterval;
@@ -283,6 +343,29 @@ public class SimulationBootstrap : MonoBehaviour
                     fluid.Init(tectonics, planetRadius, cinematic.ElevationWorldScale, cinematic.SeaLevel,
                         liquid, () => PlanetTemperature.Instance != null ? PlanetTemperature.Instance.CurrentK : temperature.CurrentK,
                         dayNight, _center, cinematic.LiquidGo, liquidFilter, cinematic.LiquidMesh, tidal);
+                    // Gas list wired immediately; mineral layer follows once deposits are generated below.
+                    fluid.SetGases(atmosphere.Gases);
+
+                    // Seed the chemical nutrient pool from the liquid volume now that
+                    // FluidDynamicsManager has computed per-vertex depths.
+                    ChemicalNutrientPool.Init(_center, tectonics.UnitVerts.ToArray(),
+                        tectonics.Elevation, fluid.GetLiquidVolumeSnapshot());
+
+                    // Hydrothermal vents: primary chemosynthetic energy source placed at
+                    // deepest ocean basins. Must run after FluidDynamicsManager.Init so
+                    // liquid volume is populated, and after ChemicalNutrientPool.Init so
+                    // ApplyVentBoost can amplify the seeded density near each vent.
+                    GameObject ventGo = new GameObject("HydrothermalVentManager");
+                    ventGo.transform.SetParent(transform);
+                    HydrothermalVentManager ventMgr = ventGo.AddComponent<HydrothermalVentManager>();
+                    ventMgr.Init(tectonics, fluid.GetLiquidVolumeSnapshot(), fluidMinVolumeToRender, planetRadius, _center);
+                    ChemicalNutrientPool.ApplyVentBoost(ventMgr, planetRadius);
+                }
+                else
+                {
+                    // No liquid: seed chemical pool from terrain elevation alone.
+                    ChemicalNutrientPool.Init(_center, tectonics.UnitVerts.ToArray(),
+                        tectonics.Elevation, null);
                 }
 
                 GameObject atmosphereVisualGo = new GameObject("AtmosphereVisual");
@@ -294,7 +377,17 @@ public class SimulationBootstrap : MonoBehaviour
                 GameObject polarIceGo = new GameObject("PolarIceManager");
                 polarIceGo.transform.SetParent(transform);
                 PolarIceManager polarIce = polarIceGo.AddComponent<PolarIceManager>();
-                polarIce.Init(tectonics, _center, planetRadius, elevationWorldScale, transform);
+                polarIce.Init(tectonics, _center, planetRadius, elevationWorldScale, transform, temperature.CurrentK);
+
+                // Mineral deposit overlay: static mesh showing where tectonic + archetype
+                // conditions produced ore/mineral deposits. Built once from the same tectonic
+                // data as the terrain, never rebuilt during gameplay.
+                MineralDepositLayer mineralDeposits = MineralDepositTable.Generate(tectonics, archetype);
+                fluid?.SetMineralLayer(mineralDeposits);
+                GameObject mineralGo = new GameObject("MineralOverlayManager");
+                mineralGo.transform.SetParent(transform);
+                MineralOverlayManager mineralOverlay = mineralGo.AddComponent<MineralOverlayManager>();
+                mineralOverlay.Init(tectonics, mineralDeposits, planetRadius, elevationWorldScale, transform);
 
                 if (enableWeather)
                 {
@@ -314,17 +407,18 @@ public class SimulationBootstrap : MonoBehaviour
                         wetOrigin = _center + tectonics.UnitVerts[floodedVertex] * planetRadius;
                 }
 
+                // Solar flux factor: L/d² normalized so Earth at 1 AU around a sun-like star = 1.
+                // Shared by all agents — set before spawning so Init() inherits the correct value.
+                AgentController.WorldSolarFluxFactor = solarSystem.Star.LuminositySolar
+                    / Mathf.Max(solarSystem.LifePlanetOrbitAU * solarSystem.LifePlanetOrbitAU, 0.01f);
+
                 // Community 0 = player's founding organism, always placed in liquid if available.
                 agentSpawner.SpawnCommunities(communityCount, minMembersPerCommunity, maxMembersPerCommunity,
                     visionMean, visionStdDev, speedMean, speedStdDev, strengthMean, strengthStdDev,
                     hardinessMean, hardinessStdDev, preferenceVariance, wetOrigin);
 
-                // Communities 1–7 = NPC species, each a single founding cell at a random
-                // surface position, with a distinct hue. They evolve autonomously through
-                // the same gene-event and speciation systems as the player's lineage.
-                agentSpawner.SpawnNPCCommunities(7,
-                    visionMean, visionStdDev, speedMean, speedStdDev, strengthMean, strengthStdDev,
-                    hardinessMean, hardinessStdDev, preferenceVariance);
+                // All biological diversity emerges via SpeciationManager from the single
+                // founding lineage — no pre-seeded NPC communities.
 
                 SpeciationManager speciationManager = gameObject.AddComponent<SpeciationManager>();
                 speciationManager.Init(agentSpawner);
@@ -332,10 +426,33 @@ public class SimulationBootstrap : MonoBehaviour
                 EraManager eraManager = gameObject.AddComponent<EraManager>();
                 eraManager.Init(agentSpawner);
 
-                PopulationStatsOverlay overlay = gameObject.AddComponent<PopulationStatsOverlay>();
-                overlay.agentSpawner = agentSpawner;
+                Era2Manager era2Manager = gameObject.AddComponent<Era2Manager>();
+                era2Manager.Init(agentSpawner);
+
+                SpeciesRelationshipManager speciesRelMgr = gameObject.AddComponent<SpeciesRelationshipManager>();
+                speciesRelMgr.Init(agentSpawner);
+
+                GameHUD hud = gameObject.AddComponent<GameHUD>();
+                hud.agentSpawner = agentSpawner;
+                hud.playerCommunityId = 0;
+
+                gameObject.AddComponent<PauseMenuManager>();
+
+                gameObject.AddComponent<InspectPopup>().Init(agentSpawner, _center, planetRadius);
 
                 SetupOrbitCamera();
+
+                // Auto-zoom to the founding organism's location and enable planet-lock
+                // so the player immediately sees their first cell rather than open space.
+                OrbitCamera orbitCam = FindAnyObjectByType<OrbitCamera>();
+                if (orbitCam != null)
+                {
+                    Vector3 focusDir = wetOrigin.HasValue
+                        ? (wetOrigin.Value - _center).normalized
+                        : Vector3.up;
+                    orbitCam.FocusOnDirection(focusDir, zoomDistance: 12f);
+                    orbitCam.EnablePlanetLock();
+                }
             });
     }
 

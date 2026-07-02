@@ -207,14 +207,16 @@ public static class TectonicPlanetGenerator
         for (int v = 0; v < n; v++)
         {
             TectonicPlate plate = plates[plateId[v]];
-            float baseline = plate.Type == PlateType.Continental ? 0.3f : -0.35f;
+            // Wider ocean/continent split so basins are clearly distinct from land.
+            // Continental +0.55, Oceanic -0.60 → ~1.15 unit gap before boundary effects.
+            float baseline = plate.Type == PlateType.Continental ? 0.55f : -0.60f;
             float falloff = 1f - distanceToBoundary[v]; // 1 at boundary, 0 far away
 
             float boundaryEffect = boundaryType[v] switch
             {
-                BoundaryType.Divergent => plate.Type == PlateType.Oceanic ? 0.1f * falloff : -0.15f * falloff,
-                BoundaryType.Convergent => plate.Type == PlateType.Continental ? 0.9f * falloff : -0.4f * falloff,
-                BoundaryType.Transform => 0.05f * falloff * (Random.value - 0.5f) * 2f,
+                BoundaryType.Divergent  => plate.Type == PlateType.Oceanic ? 0.15f * falloff : -0.20f * falloff,
+                BoundaryType.Convergent => plate.Type == PlateType.Continental ? 1.1f * falloff : -0.55f * falloff,
+                BoundaryType.Transform  => 0.08f * falloff * (Random.value - 0.5f) * 2f,
                 _ => 0f,
             };
 

@@ -32,6 +32,7 @@ public class StormVisualManager : MonoBehaviour
         public GameObject ParticleGo;
         public ParticleSystem Particles;
         public float CurrentAlpha;
+        public Transform CollisionPlane; // flat plane at surface for particle death-on-impact
     }
 
     private TectonicResult _tectonics;
@@ -56,8 +57,13 @@ public class StormVisualManager : MonoBehaviour
         _elevationWorldScale = elevationWorldScale;
         _parent = parent;
 
-        Shader shader = Shader.Find("Custom/VertexColorTransparentURP");
+        // Use the standard URP Particles/Unlit shader for the cloud overlay — it respects
+        // vertex alpha without needing a custom shader asset in the project.
+        Shader shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
+        if (shader == null) shader = Shader.Find("Sprites/Default");
+        if (shader == null) shader = Shader.Find("Unlit/Transparent");
         _overlayMaterial = new Material(shader);
+        _overlayMaterial.color = Color.white; // vertex colors carry the tint and alpha
 
         // Rain particle material: use a URP-compatible particle shader so it renders
         // translucent blue-gray instead of the magenta/pink that Unity's built-in
@@ -114,6 +120,7 @@ public class StormVisualManager : MonoBehaviour
             if (alive) continue;
             Destroy(_visuals[i].OverlayGo);
             Destroy(_visuals[i].ParticleGo);
+            if (_visuals[i].CollisionPlane != null) Destroy(_visuals[i].CollisionPlane.gameObject);
             _visuals.RemoveAt(i);
         }
 
@@ -148,6 +155,14 @@ public class StormVisualManager : MonoBehaviour
         ParticleSystem ps = particleGo.AddComponent<ParticleSystem>();
         ConfigureParticleSystem(ps, storm);
 
+        // Collision plane: a thin invisible quad positioned at the terrain surface directly
+        // below the storm. Particle collision planes must be real Transforms wired into
+        // the collision module; we use a dedicated GO so it can move with the storm.
+        GameObject planeGo = new GameObject("StormRainPlane");
+        planeGo.transform.SetParent(_parent, worldPositionStays: true);
+        var collision = ps.collision;
+        collision.AddPlane(planeGo.transform);
+
         return new StormVisual
         {
             Storm = storm,
@@ -156,6 +171,7 @@ public class StormVisualManager : MonoBehaviour
             ParticleGo = particleGo,
             Particles = ps,
             CurrentAlpha = 0f,
+            CollisionPlane = planeGo.transform,
         };
     }
 
@@ -238,6 +254,18 @@ public class StormVisualManager : MonoBehaviour
         Vector3 discUp = Mathf.Abs(Vector3.Dot(outward, Vector3.up)) < 0.99f ? Vector3.up : Vector3.forward;
         visual.ParticleGo.transform.rotation = Quaternion.LookRotation(outward, discUp);
 
+        // Collision plane sits at the terrain surface directly under the storm.
+        // Unity particle collision planes use local Y+ as the outward normal, so we
+        // set up=outward so the "ground" plane faces away from the planet center —
+        // inward-traveling rain particles cross this plane and die (lifetimeLoss=1).
+        if (visual.CollisionPlane != null)
+        {
+            visual.CollisionPlane.position = _planetCenter + outward * (_planetRadius + 0.1f);
+            Vector3 planeForward = Mathf.Abs(Vector3.Dot(outward, Vector3.forward)) < 0.99f
+                ? Vector3.forward : Vector3.right;
+            visual.CollisionPlane.rotation = Quaternion.LookRotation(planeForward, outward);
+        }
+
         // Scale emission rate with intensity: 0 at birth/death, up to 35 drops/sec at peak.
         var emission = visual.Particles.emission;
         emission.rateOverTime = storm.Intensity * 60f;
@@ -307,6 +335,18 @@ public class StormVisualManager : MonoBehaviour
         // explicitly assign one that uses a URP particle shader.
         if (_particleMaterial != null)
             renderer.sharedMaterial = _particleMaterial;
+
+        // Particle collision with terrain: die on contact with the world geometry so
+        // drops don't penetrate the surface. Using Planes mode with a single plane at
+        // the planet surface radius gives cheap per-frame collision without needing
+        // mesh colliders. The plane normal points inward (toward planet center from
+        // emitter) and its distance matches the surface, so particles stop at ground.
+        var collision = ps.collision;
+        collision.enabled = true;
+        collision.type = ParticleSystemCollisionType.Planes;
+        collision.mode = ParticleSystemCollisionMode.Collision3D;
+        collision.lifetimeLoss = 1f; // kill particle on impact (no bouncing rain)
+        collision.bounce = 0f;
 
         // Seed the startColor from the current fluid color (SyncParticles keeps it live).
         ApplyLiquidColorToParticles(ps);

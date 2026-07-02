@@ -7,22 +7,20 @@ using UnityEngine;
 /// same separation-of-concerns pattern as terrain elevation vs. liquid pooling described
 /// in PlanetTileMesh.cs's header comment.
 ///
-/// CURRENT STATE OF THE CODEBASE (checked before writing this): there is no moon system
-/// yet (StarSystemGenerator.SolarSystemDef has no moon data - only a host Star and purely
-/// decorative OtherPlanets) and no fluid dynamics replacement for PlanetTileMesh's static
-/// flood-fill liquid shell. So this implements the star-only tidal case described as the
-/// fallback: a real (if much smaller than a moon's) solar tide, driven by the existing
-/// DayNightCycle's sun direction and StarSystemGenerator's rolled star data, applied
-/// directly to the static liquid shell mesh built in GenesisCinematic.
+/// MOON INTEGRATION: SolarSystemDef.LifePlanetMoons (see StarSystemGenerator.cs) now
+/// exists with exactly the RelativeMass/OrbitDistance/OrbitalPeriod fields this class's
+/// generalization path originally called for, and SolarSystemRuntime spawns/orbits the
+/// actual moon GameObjects. Init() below adds one TidalSource per life-planet moon,
+/// reading its live world position back from SolarSystemRuntime each frame (real tidal
+/// force ~ mass / distance^3, so a close moon can swamp the much more distant star - this
+/// uses RelativeMass directly and folds in 1/distance^3 the same way, rather than the
+/// star's simpler "always overhead, period = day length" treatment, since a moon's
+/// position genuinely moves independent of the day/night light).
 ///
-/// GENERALIZATION PATH: if a moon system is added later (e.g. a List<MoonDef> on
-/// SolarSystemDef with RelativeMass/OrbitDistance/OrbitalPeriod), add each moon as an
-/// additional TidalSource (see struct below) with its own direction-update function and
-/// stronger relative magnitude (real tidal force ~ mass / distance^3, so a close moon
-/// dominates the much more distant star). If a fluid dynamics system replaces the static
-/// shell, swap RebuildShell()'s direct mesh-vertex write for whatever per-vertex liquid
-/// level hook that system exposes - TidalHeightAt() below is already factored out as a
-/// standalone function for exactly that handoff.
+/// If a fluid dynamics system replaces the static shell, swap RebuildShell()'s direct
+/// mesh-vertex write for whatever per-vertex liquid level hook that system exposes -
+/// TidalHeightAt() below is already factored out as a standalone function for exactly that
+/// handoff (see FluidDynamicsManager, which already calls it this way).
 public class TidalForceManager : MonoBehaviour
 {
     private struct TidalSource
@@ -94,6 +92,36 @@ public class TidalForceManager : MonoBehaviour
         });
 
         RebuildShell(force: true);
+    }
+
+    /// Adds a separate TidalSource for each of the life-planet's rolled moons (if any
+    /// exist) via the live transforms SolarSystemRuntime maintains every frame. Must be
+    /// called AFTER both Init() and SolarSystemRuntime.Init() have already run, so moon
+    /// transforms are populated and positioned.
+    public void AddMoonTidalSources(SolarSystemRuntime solarRuntime)
+    {
+        if (solarRuntime == null || solarRuntime.LifePlanetMoonTransforms == null) return;
+        foreach (var (def, tr) in solarRuntime.LifePlanetMoonTransforms)
+        {
+            if (tr == null) continue;
+            Transform captured = tr;
+            float mass = Mathf.Max(0.001f, def.RelativeMass);
+            float orbitDist = Mathf.Max(0.1f, def.OrbitDistance);
+            // Tidal force ~ mass / distance^3; scale so that the total lunar tidal
+            // contribution stays in a visually reasonable range relative to the star tide.
+            float baseStrength = mass / (orbitDist * orbitDist * orbitDist);
+            _sources.Add(new TidalSource
+            {
+                Name = $"Moon_{captured.name}",
+                RelativeStrength = baseStrength,
+                OrbitalPeriodSeconds = def.OrbitalPeriodSeconds,
+                GetDirection = () =>
+                {
+                    if (captured == null) return Vector3.up;
+                    return (captured.position - _center).normalized;
+                },
+            });
+        }
     }
 
     /// Crude relative-mass proxy from the rolled star's luminosity (no real stellar mass

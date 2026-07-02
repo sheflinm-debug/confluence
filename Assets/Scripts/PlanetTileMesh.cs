@@ -20,7 +20,7 @@ public static class PlanetTileMesh
     }
 
     public static MeshData BuildData(TectonicResult tectonics, float radius,
-        float elevationWorldScale, RockArchetypeDef archetype)
+        float elevationWorldScale, RockArchetypeDef archetype, float temperatureK = 400f)
     {
         List<Vector3> unitVerts = tectonics.UnitVerts;
         List<int> triangles = tectonics.Triangles;
@@ -33,9 +33,9 @@ public static class PlanetTileMesh
         {
             int ia = triangles[i], ib = triangles[i + 1], ic = triangles[i + 2];
 
-            (Vector3 a, Color colorA) = VertexWorld(unitVerts[ia], tectonics, ia, radius, elevationWorldScale, archetype);
-            (Vector3 b, Color colorB) = VertexWorld(unitVerts[ib], tectonics, ib, radius, elevationWorldScale, archetype);
-            (Vector3 c, Color colorC) = VertexWorld(unitVerts[ic], tectonics, ic, radius, elevationWorldScale, archetype);
+            (Vector3 a, Color colorA) = VertexWorld(unitVerts[ia], tectonics, ia, radius, elevationWorldScale, archetype, temperatureK);
+            (Vector3 b, Color colorB) = VertexWorld(unitVerts[ib], tectonics, ib, radius, elevationWorldScale, archetype, temperatureK);
+            (Vector3 c, Color colorC) = VertexWorld(unitVerts[ic], tectonics, ic, radius, elevationWorldScale, archetype, temperatureK);
 
             Color faceColor = (colorA + colorB + colorC) / 3f;
 
@@ -60,7 +60,8 @@ public static class PlanetTileMesh
         List<Vector3> unitVerts = tectonics.UnitVerts;
         List<int> triangles = tectonics.Triangles;
         Color liquidColor = liquid.ColorAt(liquidTempK);
-        float shellRadius = radius + seaLevelElevation * elevationWorldScale + 0.05f;
+        const float shellLift = 0.08f; // small lift to beat z-fighting without creating edge spikes
+        float shellRadius = radius + seaLevelElevation * elevationWorldScale + shellLift;
 
         var verts = new List<Vector3>(triangles.Count / 2);
         var colors = new List<Color>(triangles.Count / 2);
@@ -69,13 +70,21 @@ public static class PlanetTileMesh
         for (int i = 0; i < triangles.Count; i += 3)
         {
             int ia = triangles[i], ib = triangles[i + 1], ic = triangles[i + 2];
-            float avgElevation = (tectonics.Elevation[ia] + tectonics.Elevation[ib] + tectonics.Elevation[ic]) / 3f;
+            float ea = tectonics.Elevation[ia], eb = tectonics.Elevation[ib], ec = tectonics.Elevation[ic];
+            float avgElevation = (ea + eb + ec) / 3f;
             if (avgElevation >= seaLevelElevation) continue; // dry face - no liquid here
 
+            // Pin each vertex: wet vertices sit at shellRadius; coastline-edge vertices
+            // (elevation above seaLevel) are clamped to their terrain height + tiny lift
+            // so the shell doesn't float above the land and create visible edge spikes.
+            float rA = ea < seaLevelElevation ? shellRadius : radius + ea * elevationWorldScale + shellLift;
+            float rB = eb < seaLevelElevation ? shellRadius : radius + eb * elevationWorldScale + shellLift;
+            float rC = ec < seaLevelElevation ? shellRadius : radius + ec * elevationWorldScale + shellLift;
+
             int baseIndex = verts.Count;
-            verts.Add(unitVerts[ia] * shellRadius);
-            verts.Add(unitVerts[ib] * shellRadius);
-            verts.Add(unitVerts[ic] * shellRadius);
+            verts.Add(unitVerts[ia] * rA);
+            verts.Add(unitVerts[ib] * rB);
+            verts.Add(unitVerts[ic] * rC);
             colors.Add(liquidColor); colors.Add(liquidColor); colors.Add(liquidColor);
             outTriangles.Add(baseIndex); outTriangles.Add(baseIndex + 1); outTriangles.Add(baseIndex + 2);
         }
@@ -83,14 +92,13 @@ public static class PlanetTileMesh
         return new MeshData { Vertices = verts.ToArray(), Colors = colors.ToArray(), Triangles = outTriangles.ToArray() };
     }
 
-    /// Rebuildable variant driven by a live per-vertex liquid VOLUME array (FluidDynamicsManager's
-    /// simulation state) instead of a one-time static sea-level percentile. A face is included
-    /// whenever at least one of its vertices holds liquid above `minVolumeToRender`; each
-    /// included vertex's shell radius is the terrain radius at that vertex PLUS its own liquid
-    /// depth (volume scaled by elevationWorldScale), so puddles/lakes/oceans read as locally
-    /// varying depth rather than one flat global sea level. Vertices below the volume threshold
-    /// that still belong to an included face are pinned to the terrain radius (dry edge of a
-    /// wet face), avoiding a floating shell over dry land.
+    /// Rebuildable variant driven by a live per-vertex liquid VOLUME array.
+    /// The ocean surface is a gravitational equipotential — a sphere at constant radius —
+    /// so ALL wet vertices sit at the same shell radius (mean water-surface height across
+    /// the wet region). Depth variation is encoded purely in COLOR (dark = deep basin,
+    /// pale = shallow shelf), never in vertex height. This prevents terrain-tracking
+    /// artifacts, eliminates per-vertex volume steps showing as visible geometry, and
+    /// lets the wave animation run on a properly flat base surface.
     public static MeshData BuildLiquidShellDataFromVolume(TectonicResult tectonics, float radius,
         float elevationWorldScale, float[] liquidVolume, float minVolumeToRender, LiquidDef liquid, float liquidTempK)
     {
@@ -98,6 +106,28 @@ public static class PlanetTileMesh
         List<int> triangles = tectonics.Triangles;
         Color liquidColor = liquid.ColorAt(liquidTempK);
         const float epsilon = 0.05f;
+
+        // --- Compute effective sea level ---
+        // Sea level = mean(terrain[v] + liquidVolume[v]) for all wet vertices.
+        // This is the average water-surface height — the equipotential the ocean settles to.
+        // Using mean rather than min/max avoids outliers from transient precipitation spikes.
+        double sumSurface = 0.0;
+        int wetCount = 0;
+        for (int v = 0; v < liquidVolume.Length; v++)
+        {
+            if (v >= tectonics.Elevation.Length || liquidVolume[v] < minVolumeToRender) continue;
+            sumSurface += tectonics.Elevation[v] + liquidVolume[v];
+            wetCount++;
+        }
+        if (wetCount == 0) return new MeshData();
+        float seaLevel = (float)(sumSurface / wetCount);
+        float shellRadius = radius + seaLevel * elevationWorldScale + epsilon;
+
+        // Shallow: close to sea level (terrain just below surface). Deep: far below.
+        // Depth range for color: 0 = at sea level (shore), 1 = 1.5 elevation units below.
+        Color.RGBToHSV(liquidColor, out float lh, out float ls, out float lv);
+        Color shallowColor = Color.HSVToRGB(lh, ls * 0.35f, Mathf.Min(lv + 0.35f, 1f));
+        shallowColor.a = liquidColor.a * 0.4f;
 
         var verts = new List<Vector3>(triangles.Count / 2);
         var colors = new List<Color>(triangles.Count / 2);
@@ -107,24 +137,44 @@ public static class PlanetTileMesh
         {
             int ia = triangles[i], ib = triangles[i + 1], ic = triangles[i + 2];
             float va = liquidVolume[ia], vb = liquidVolume[ib], vc = liquidVolume[ic];
-            if (va < minVolumeToRender && vb < minVolumeToRender && vc < minVolumeToRender) continue; // fully dry face
+            if (va < minVolumeToRender && vb < minVolumeToRender && vc < minVolumeToRender) continue;
+
+            // Wet vertex → flat sea-level shell. Dry coastal vertex → base sphere (no lift).
+            float rA = va >= minVolumeToRender ? shellRadius : radius + epsilon;
+            float rB = vb >= minVolumeToRender ? shellRadius : radius + epsilon;
+            float rC = vc >= minVolumeToRender ? shellRadius : radius + epsilon;
 
             int baseIndex = verts.Count;
-            verts.Add(ShellVertex(unitVerts[ia], tectonics.Elevation[ia], va, radius, elevationWorldScale, minVolumeToRender, epsilon));
-            verts.Add(ShellVertex(unitVerts[ib], tectonics.Elevation[ib], vb, radius, elevationWorldScale, minVolumeToRender, epsilon));
-            verts.Add(ShellVertex(unitVerts[ic], tectonics.Elevation[ic], vc, radius, elevationWorldScale, minVolumeToRender, epsilon));
-            colors.Add(liquidColor); colors.Add(liquidColor); colors.Add(liquidColor);
+            verts.Add(unitVerts[ia] * rA);
+            verts.Add(unitVerts[ib] * rB);
+            verts.Add(unitVerts[ic] * rC);
+
+            // Depth = how far terrain sits below sea level. Color encodes the basin shape.
+            colors.Add(DepthColor(seaLevel - tectonics.Elevation[ia], liquidColor, shallowColor));
+            colors.Add(DepthColor(seaLevel - tectonics.Elevation[ib], liquidColor, shallowColor));
+            colors.Add(DepthColor(seaLevel - tectonics.Elevation[ic], liquidColor, shallowColor));
             outTriangles.Add(baseIndex); outTriangles.Add(baseIndex + 1); outTriangles.Add(baseIndex + 2);
         }
 
         return new MeshData { Vertices = verts.ToArray(), Colors = colors.ToArray(), Triangles = outTriangles.ToArray() };
     }
 
+    // depth = seaLevel - terrainElevation at vertex. 0 = shoreline, 1.5+ = deep basin.
+    private static Color DepthColor(float depth, Color deepColor, Color shallowColor)
+    {
+        float depthT = Mathf.SmoothStep(0f, 1.5f, depth);
+        return Color.Lerp(shallowColor, deepColor, depthT);
+    }
+
     private static Vector3 ShellVertex(Vector3 unitVert, float terrainElevation, float liquidVolume,
         float radius, float elevationWorldScale, float minVolumeToRender, float epsilon)
     {
-        float depth = liquidVolume >= minVolumeToRender ? liquidVolume : 0f;
-        float shellRadius = radius + terrainElevation * elevationWorldScale + depth * elevationWorldScale + epsilon;
+        if (liquidVolume < minVolumeToRender)
+        {
+            // Coastal vertex shared by a partially-wet triangle: clamp to base sphere.
+            return unitVert * (radius + epsilon);
+        }
+        float shellRadius = radius + terrainElevation * elevationWorldScale + liquidVolume * elevationWorldScale + epsilon;
         return unitVert * shellRadius;
     }
 
@@ -149,35 +199,81 @@ public static class PlanetTileMesh
     }
 
     private static (Vector3 worldPos, Color color) VertexWorld(
-        Vector3 unitVert, TectonicResult tectonics, int vertexIndex, float radius, float elevationWorldScale, RockArchetypeDef archetype)
+        Vector3 unitVert, TectonicResult tectonics, int vertexIndex, float radius, float elevationWorldScale, RockArchetypeDef archetype, float temperatureK = 400f)
     {
         float terrainElevation = tectonics.Elevation[vertexIndex];
         float worldRadius = radius + terrainElevation * elevationWorldScale;
         Vector3 worldPos = unitVert * worldRadius;
-        Color color = RockColor(tectonics.RockTypeAtVertex[vertexIndex], archetype, terrainElevation);
+        Color color = RockColor(tectonics.RockTypeAtVertex[vertexIndex], archetype, terrainElevation, unitVert.y, temperatureK);
         return (worldPos, color);
     }
 
-    private static Color RockColor(RockType type, RockArchetypeDef archetype, float elevation)
+    private static Color RockColor(RockType type, RockArchetypeDef archetype, float elevation, float latitudeSin = 0f, float temperatureK = 400f)
     {
+        // Base rock type colors shifted toward the archetype hue rather than pure gray/beige,
+        // so each rock type reads as a DARKER or LIGHTER variant of the archetype rather than
+        // an unrelated color that gets washed out by the blend.
+        Color.RGBToHSV(archetype.Primary, out float ah, out float aS, out float aV);
         Color baseColor = type switch
         {
-            RockType.IgneousMafic => new Color(0.16f, 0.17f, 0.19f),
-            RockType.IgneousFelsic => new Color(0.72f, 0.68f, 0.62f),
-            RockType.Metamorphic => new Color(0.45f, 0.4f, 0.48f),
-            RockType.Sedimentary => new Color(0.78f, 0.66f, 0.48f),
-            _ => Color.gray,
+            // Mafic: dark, basaltic — always the darkest facies on this planet's palette.
+            RockType.IgneousMafic   => Color.HSVToRGB(ah, Mathf.Min(aS + 0.25f, 1f), aV * 0.35f),
+            // Felsic: light, granitic — always the brightest continental crust tone.
+            RockType.IgneousFelsic  => Color.HSVToRGB(ah, aS * 0.45f, Mathf.Min(aV + 0.25f, 1f)),
+            // Metamorphic: medium-dark, shifted toward the accent hue for variety.
+            RockType.Metamorphic    => Color.Lerp(
+                Color.HSVToRGB(ah, Mathf.Min(aS + 0.15f, 1f), aV * 0.55f),
+                archetype.Accent, 0.35f),
+            // Sedimentary: warm sandy tone tinted by archetype hue.
+            RockType.Sedimentary    => Color.HSVToRGB(ah, aS * 0.60f, Mathf.Min(aV * 0.85f + 0.15f, 1f)),
+            _                       => archetype.Primary,
         };
 
-        Color blended = Color.Lerp(baseColor, archetype.Primary, 0.2f);
-        blended = Color.Lerp(blended, archetype.Accent, 0.12f);
+        // Archetype accent adds local mineral variation; primary sets the global hue.
+        Color blended = Color.Lerp(baseColor, archetype.Primary, 0.40f);
+        blended = Color.Lerp(blended, archetype.Accent, 0.20f);
 
         // Slight elevation tint: peaks read lighter (exposed/weathered rock), basins darker.
         float tint = Mathf.Clamp(elevation, -0.5f, 1f) * 0.08f;
-        return new Color(
+        Color result = new Color(
             Mathf.Clamp01(blended.r + tint),
             Mathf.Clamp01(blended.g + tint),
             Mathf.Clamp01(blended.b + tint));
+
+        float absLat = Mathf.Abs(latitudeSin);
+
+        // Polar ice caps only on cold worlds. Starts at ~75° lat on a near-freezing world,
+        // stronger/lower on colder worlds; absent entirely above 270K (no ice possible).
+        if (temperatureK < 270f)
+        {
+            // iceStrength: 0 at 270K, 1 at ≤200K
+            float iceStrength = Mathf.InverseLerp(270f, 200f, temperatureK);
+            // iceStartLat: sin(lat) above which ice begins — expands toward equator on very cold worlds
+            float iceStartLat = Mathf.Lerp(0.97f, 0.80f, iceStrength);
+            // GLSL-style threshold smoothstep: 0 below iceStartLat, 1 above iceStartLat+0.10
+            // (Mathf.SmoothStep is a lerp, NOT a threshold — must do this manually)
+            float iceT = Mathf.Clamp01((absLat - iceStartLat) / 0.10f);
+            float iceFraction = iceT * iceT * (3f - 2f * iceT) * iceStrength;
+            if (iceFraction > 0f)
+                result = Color.Lerp(result, new Color(0.88f, 0.92f, 1.0f), iceFraction);
+        }
+
+        // Hot worlds: ochre/rust tint (baked rock, dust, lava plains).
+        if (temperatureK > 420f)
+        {
+            float hotStrength = Mathf.Clamp01((temperatureK - 420f) / 250f) * 0.18f;
+            result = new Color(
+                Mathf.Clamp01(result.r + hotStrength),
+                Mathf.Clamp01(result.g - hotStrength * 0.2f),
+                Mathf.Clamp01(result.b - hotStrength * 0.5f));
+        }
+
+        // Equatorial warmth band: subtle warm tint in tropical zone.
+        float equatorialBand = Mathf.SmoothStep(0.25f, 0f, absLat);
+        if (equatorialBand > 0f)
+            result = Color.Lerp(result, new Color(Mathf.Clamp01(result.r * 1.04f), result.g, Mathf.Clamp01(result.b * 0.95f)), equatorialBand * 0.18f);
+
+        return result;
     }
 
     /// Returns the elevation value below which `percentile` fraction of vertices fall -

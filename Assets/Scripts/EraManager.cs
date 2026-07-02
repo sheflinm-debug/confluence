@@ -20,7 +20,10 @@ public class EraManager : MonoBehaviour
     // Per-Era1-subphase properties. Index 0 = Abiogenesis, 5 = Cambrian Explosion.
     // EraTimeline.Era1StartIndex = 8, so era sub-phase 0 = phase index 8.
     private static readonly float[] AgentScalePerEra    = { 0.05f, 0.08f, 0.10f, 0.15f, 0.22f, 0.32f };
-    private static readonly int[]   MaxPopPerEra         = {    15,    40,    60,   100,   180,   300  };
+    // Abiogenesis: sparse (15). Prokaryotic Seas: full microbial ocean (120) — the longest
+    // and most dominant era in Earth history. GOE: die-off from oxygen toxicity (70).
+    // Eukaryotes → Multicellularity: gradual recovery. Cambrian: explosion to hard cap.
+    private static readonly int[]   MaxPopPerEra         = {    15,   120,    70,   120,   200,   350  };
     // Fraction of an agent's computed moveSpeed that's actually used.
     // Primordial microbes are sluggish; locomotion genes unlock speed over time.
     // Agents poll this in Update so era transitions take effect on all live agents.
@@ -50,6 +53,13 @@ public class EraManager : MonoBehaviour
     private AgentSpawner _spawner;
     private string _flashText = "";
     private float _flashTimer;
+
+    // Era 1→2 biology gate. When Cambrian begins, we open a window and check each frame
+    // whether the player's lineage has resolved all three AND-gate events. If yes, Era 2
+    // starts early. If not, the ceiling fires after the full Cambrian duration.
+    private bool  _cambrianWindowOpen;
+    private float _cambrianWindowElapsed;
+    private const float CambrianCeilingSeconds = 45f; // matches EraTimeline Cambrian duration
 
     public void Init(AgentSpawner spawner)
     {
@@ -85,6 +95,27 @@ public class EraManager : MonoBehaviour
         }
 
         if (_flashTimer > 0f) _flashTimer -= Time.deltaTime;
+
+        // Cambrian AND-gate: advance to Era 2 when biology is ready (or ceiling expires).
+        if (_cambrianWindowOpen && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive))
+        {
+            _cambrianWindowElapsed += Time.deltaTime;
+            bool gatemet = CheckEra1To2Gate();
+            bool ceiling = _cambrianWindowElapsed >= CambrianCeilingSeconds;
+            if (gatemet || ceiling)
+            {
+                _cambrianWindowOpen = false;
+                if (ceiling && !gatemet)
+                {
+                    // Straggler fallback: force-apply any unresolved gate events for the player.
+                    if (_spawner != null)
+                        foreach (var a in _spawner.ActiveAgents)
+                            if (a != null && a.communityId == 0)
+                                GeneEvolutionManager.ForceApplyOutstandingEra1Events(a);
+                }
+                if (Era2Manager.Instance != null) Era2Manager.Instance.BeginEra2();
+            }
+        }
     }
 
     private void OnEraTransition(int era)
@@ -111,6 +142,30 @@ public class EraManager : MonoBehaviour
         }
 
         Debug.Log($"[EraManager] Era transition → {EraNames[era]} (era {era}), agentScale={AgentScalePerEra[era]:F2}, maxPop={MaxPopPerEra[era]}");
+
+        // When Cambrian Explosion begins, open the biology-gate window. Era 2 fires as soon
+        // as the player's lineage resolves all three AND-gate events (KingdomFork +
+        // ProtectiveStructureEmergence + SensoryOrganDevelopment), or after the ceiling.
+        if (era == 5)
+        {
+            _cambrianWindowOpen    = true;
+            _cambrianWindowElapsed = 0f;
+        }
+    }
+
+    /// Era 1→2 AND-gate: true when the player's lineage has resolved the three minimum
+    /// events required for the Cambrian Explosion threshold (§77 spec).
+    private bool CheckEra1To2Gate()
+    {
+        if (_spawner == null) return false;
+        foreach (var agent in _spawner.ActiveAgents)
+        {
+            if (agent == null || agent.communityId != 0) continue;
+            return agent.AcquiredGenes.Contains("KingdomFork")
+                && agent.AcquiredGenes.Contains("ProtectiveStructureEmergence")
+                && agent.AcquiredGenes.Contains("SensoryOrganDevelopment");
+        }
+        return false; // no player agent found — don't advance prematurely
     }
 
     void OnGUI()

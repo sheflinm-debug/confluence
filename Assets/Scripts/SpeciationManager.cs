@@ -36,20 +36,34 @@ public class SpeciationManager : MonoBehaviour
     }
     private readonly List<IsolationEvent> _isolationEvents = new List<IsolationEvent>();
 
-    // Real-time seconds between auto-speciation events for the same lineage. At high
-    // compression ratios (Prokaryotic: 25,000 kyr/sec) the SI formula would fire every
-    // few seconds without this floor, which reads as noise rather than meaningful events.
+    // Real-time seconds between auto-speciation events for the same lineage.
     [Header("Rate limiter")]
-    [Tooltip("Minimum real-time seconds between two speciation events for the same lineage.")]
-    public float minSecondsBetweenSplits = 8f;
+    [Tooltip("Minimum real-time seconds between two speciation events for the same lineage. " +
+             "60s = one branch per minute per lineage at most, regardless of time compression.")]
+    public float minSecondsBetweenSplits = 60f;
+
+    // Cap on the effective kyr-per-frame used in the SI roll so extreme geological
+    // time-compression (Prokaryotic seas ≈ 8000 kyr/sec) doesn't make speciation
+    // a near-certainty every cooldown expiry. 0.5 kyr per frame ≈ 30 fps effective rate.
+    [Tooltip("Maximum simulated kiloyears per frame counted toward the speciation roll. " +
+             "Prevents time-compression from overwhelming the SI probability. " +
+             "50 kyr/frame gives ~1 event per lineage per minute at Prokaryotic baseRate.")]
+    public float maxDtKyrPerRoll = 50f;
 
     // Tracks the last real time (Time.time) each lineage split, for cooldown enforcement.
     private readonly Dictionary<string, float> _lastSpeciationTime = new Dictionary<string, float>();
 
-    // Diagnostic state (read by OnGUI).
+    // Monotonically-increasing community ID counter. Community 0 = player's founding
+    // lineage. Each speciation event branches a new community from an existing one.
+    private int _nextCommunityId = 1;
+
+    // Diagnostic state (read by OnGUI / HUD).
     private float _maxSIThisFrame;
     private string _dominantLineage = "—";
     private string _eraLabel = "—";
+    public float MaxSI => _maxSIThisFrame;
+    public string EraLabel => _eraLabel;
+    public int SpeciesCount => _speciesCount;
     private int _speciesCount = 1;
 
     // -------------------------------------------------------------------------
@@ -128,6 +142,15 @@ public class SpeciationManager : MonoBehaviour
         _maxSIThisFrame = 0f;
         _dominantLineage = "—";
 
+        // Prune cooldown entries for extinct lineages so the dict doesn't grow forever.
+        if (_lastSpeciationTime.Count > lineages.Count * 2)
+        {
+            var toRemove = new List<string>();
+            foreach (var k in _lastSpeciationTime.Keys)
+                if (!lineages.ContainsKey(k)) toRemove.Add(k);
+            foreach (var k in toRemove) _lastSpeciationTime.Remove(k);
+        }
+
         float compressionKyrPerSec = GetCompressionKyrPerSecond();
         float baseRate = GetBaseRate();
         float fragmentation = GetFragmentation();
@@ -154,19 +177,15 @@ public class SpeciationManager : MonoBehaviour
                 _dominantLineage = kvp.Key;
             }
 
-            // Player's lineage (communityId == 0) is never auto-speciated — the player
-            // triggers their own divergence events via the gene / choice UI.
-            bool isPlayerLineage = false;
-            foreach (var a in members) { if (a.communityId == 0) { isPlayerLineage = true; break; } }
-            if (isPlayerLineage) continue;
-
             // Per-lineage cooldown: even at high kyr-compression, don't fire more than
             // once per minSecondsBetweenSplits real seconds for the same lineage.
             _lastSpeciationTime.TryGetValue(kvp.Key, out float lastFired);
             bool cooledDown = (Time.time - lastFired) >= minSecondsBetweenSplits;
 
-            // Roll: random() < SI × tick_length_in_kyr
-            if (cooledDown && Random.value < si * dtKyr)
+            // Roll: random() < SI × tick_length_in_kyr, capped so large time-compression
+            // ratios don't make speciation a near-certainty every cooldown expiry.
+            float rollDt = Mathf.Min(dtKyr, maxDtKyrPerRoll);
+            if (cooledDown && Random.value < si * rollDt)
             {
                 _lastSpeciationTime[kvp.Key] = Time.time;
                 FireSpeciation(members);
@@ -180,15 +199,41 @@ public class SpeciationManager : MonoBehaviour
 
     private void FireSpeciation(List<AgentController> lineage)
     {
-        AgentController agent = lineage[Random.Range(0, lineage.Count)];
-        if (agent == null) return;
+        AgentController parent = lineage[Random.Range(0, lineage.Count)];
+        if (parent == null) return;
 
-        string oldLineage = agent.AtmoLineage;
         string newLineageName = KingdomNameGenerator.Generate();
         Color newColor = Color.HSVToRGB(Random.value, Random.Range(0.65f, 0.95f), Random.Range(0.85f, 1f));
-        agent.TriggerSpeciation(newLineageName, newColor);
 
-        Debug.Log($"[SpeciationManager] '{oldLineage}' → '{newLineageName}' | SI={_maxSIThisFrame:G4} era={_eraLabel} species={_speciesCount}");
+        // Speciation branches a new OFFSPRING rather than relabeling the parent.
+        // The ancestral lineage continues unchanged; the divergent descendant founds
+        // its own clade with slightly drifted traits (niche divergence).
+        float drift = parent.mutationStdDev * 2f;
+        float vision    = Mathf.Clamp(PopulationStats.SampleDimension(parent.visionTrait,          drift), 0f, 100f);
+        float speed     = Mathf.Clamp(PopulationStats.SampleDimension(parent.speedTrait,           drift), 0f, 100f);
+        float strength  = Mathf.Clamp(PopulationStats.SampleDimension(parent.strengthTrait,        drift), 0f, 100f);
+        float hardiness = Mathf.Clamp(PopulationStats.SampleDimension(parent.hardinessTrait,       drift), 0f, 100f);
+        float tempPref  = Mathf.Clamp(PopulationStats.SampleDimension(parent.temperaturePreference,drift), 0f, 100f);
+        float moistPref = Mathf.Clamp(PopulationStats.SampleDimension(parent.moisturePreference,   drift), 0f, 100f);
+
+        Vector3 surfNormal = (parent.transform.position - _agentSpawner.planetCenter).normalized;
+        Vector3 tangent = Vector3.Cross(surfNormal, Random.onUnitSphere).normalized;
+        Vector3 pos = SphereSurface.MoveAlongSurface(
+            parent.transform.position, tangent, 1.5f,
+            _agentSpawner.planetCenter, _agentSpawner.planetRadius);
+
+        // Don't branch if the era population cap is already full.
+        if (EraManager.Instance != null &&
+            _agentSpawner.ActiveAgents.Count >= EraManager.Instance.MaxPopulation) return;
+
+        int newCommunityId = _nextCommunityId++;
+        AgentController child = _agentSpawner.SpawnAgent(
+            vision, speed, strength, hardiness, tempPref, moistPref,
+            pos, newCommunityId, newColor);
+        child.InheritGenesFrom(parent);
+        child.TriggerSpeciation(newLineageName, newColor);
+
+        Debug.Log($"[SpeciationManager] '{parent.AtmoLineage}' branched → '{newLineageName}' (community {newCommunityId}) | SI={_maxSIThisFrame:G4} era={_eraLabel} species={_speciesCount + 1}");
     }
 
     /// Fragmentation: maximum active isolation multiplier, or 1.0 background.
@@ -249,6 +294,7 @@ public class SpeciationManager : MonoBehaviour
 
     void OnGUI()
     {
+        if (GameHUD.SuppressRawOverlays) return;
         GUIStyle style = new GUIStyle(GUI.skin.label)
         {
             fontSize = 13,

@@ -92,13 +92,13 @@ public class AtmosphereVisual : MonoBehaviour
         float verdictCap = verdict switch
         {
             AtmosphereRenderVerdict.Transparent => 0.10f,
-            AtmosphereRenderVerdict.Opaque => 0.85f,
-            _ => 0.40f, // Translucent - also the default per "translucent unless specified otherwise"
+            AtmosphereRenderVerdict.Opaque      => 0.50f, // was 0.85f — terrain must stay visible
+            _ => 0.32f, // Translucent - also the default per "translucent unless specified otherwise"
         };
 
         float pressureScale = Mathf.Clamp(pressureBar / Mathf.Max(0.01f, type.PressureMaxBar * 0.3f), 0.4f, 1.6f);
         float finalAlpha = Mathf.Clamp01(Mathf.Max(accumAlpha, verdictCap * 0.5f) * pressureScale);
-        finalAlpha = Mathf.Min(finalAlpha, verdictCap * 1.4f);
+        finalAlpha = Mathf.Min(finalAlpha, verdictCap * 1.2f);
 
         return (accum, finalAlpha);
     }
@@ -111,6 +111,7 @@ public class AtmosphereVisual : MonoBehaviour
 
     void OnGUI()
     {
+        if (GameHUD.SuppressRawOverlays) return;
         float w = 130f, h = 26f;
         Rect r = new Rect(Screen.width - w - 10f, 10f, w, h);
         string label = Visible ? "Atmosphere: ON" : "Atmosphere: OFF";

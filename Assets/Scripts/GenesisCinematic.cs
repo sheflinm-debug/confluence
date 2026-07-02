@@ -107,7 +107,7 @@ public class GenesisCinematic : MonoBehaviour
         RenderSettings.ambientLight = new Color(0.04f, 0.04f, 0.07f);
 
         _molten = BuildMoltenData(tectonics, planetRadius);
-        _terrainOnly = PlanetTileMesh.BuildData(tectonics, planetRadius, elevationWorldScale, archetype);
+        _terrainOnly = PlanetTileMesh.BuildData(tectonics, planetRadius, elevationWorldScale, archetype, liquidTempK);
 
         _lerpVerts = new Vector3[_molten.Vertices.Length];
         _lerpColors = new Color[_molten.Colors.Length];
@@ -201,6 +201,7 @@ public class GenesisCinematic : MonoBehaviour
         yield return LerpPhase(EraTimeline.AbioticStartIndex + 1, _molten, _terrainOnly, center); // Crust formation & cooling
         yield return PhaseCondensation(EraTimeline.AbioticStartIndex + 2, center);                 // Condensation & water arrival
         yield return PhaseTopographyReveal(center, planetRadius);
+        yield return PhaseFirstLifeEmerges(center, planetRadius);
 
         // Star and decorative planets are left in the scene as permanent distant
         // background dressing (per the user's note: focus stays on the life-planet, but
@@ -212,26 +213,134 @@ public class GenesisCinematic : MonoBehaviour
     {
         float duration = EraTimeline.Phases[EraTimeline.IntroStartIndex + 0].DurationSeconds;
 
+        _cam.transform.position = new Vector3(0f, 0f, -15f);
+        _cam.transform.LookAt(Vector3.zero);
+
+        // Central flash sphere.
         GameObject burst = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         Destroy(burst.GetComponent<Collider>());
         burst.transform.position = Vector3.zero;
-        Material mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-        mat.color = Color.white;
-        mat.EnableKeyword("_EMISSION");
-        mat.SetColor("_EmissionColor", Color.white * 3f);
-        burst.GetComponent<Renderer>().material = mat;
+        Material burstMat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+        burstMat.color = Color.white;
+        burstMat.EnableKeyword("_EMISSION");
+        burst.GetComponent<Renderer>().material = burstMat;
 
-        _cam.transform.position = new Vector3(0f, 0f, -15f);
-        _cam.transform.LookAt(Vector3.zero);
+        // Ejecta particles — small spheres launched radially outward.
+        const int ParticleCount = 32;
+        var particles = new (GameObject go, Vector3 dir, float speed, float size)[ParticleCount];
+        Material particleMat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+        particleMat.EnableKeyword("_EMISSION");
+        for (int i = 0; i < ParticleCount; i++)
+        {
+            GameObject p = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            Destroy(p.GetComponent<Collider>());
+            p.transform.position = Vector3.zero;
+            p.GetComponent<Renderer>().material = particleMat;
+            float sz = Random.Range(0.08f, 0.35f);
+            p.transform.localScale = Vector3.zero;
+            particles[i] = (p, Random.onUnitSphere, Random.Range(2.5f, 8f), sz);
+        }
+
+        // Two shock-ring discs (flat horizontal rings expanding outward).
+        GameObject ring1 = BuildRingGo(Vector3.zero, 0f, new Color(1f, 0.9f, 0.6f, 0.7f));
+        GameObject ring2 = BuildRingGo(Vector3.zero, 0f, new Color(0.7f, 0.85f, 1f, 0.5f));
 
         float t = 0f;
         while (t < duration)
         {
             t += Time.deltaTime;
-            burst.transform.localScale = Vector3.one * Mathf.SmoothStep(0f, 6f, t / duration);
+            float k = t / duration; // 0→1 over full duration
+
+            // Central burst: bright flash → dims and expands.
+            float flashK = Mathf.Clamp01(k * 8f);         // peaks at 1/8 of duration
+            float emStr  = Mathf.Lerp(12f, 0.2f, flashK);
+            Color flashCol = Color.Lerp(Color.white, new Color(1f, 0.7f, 0.2f), k * 0.6f);
+            burstMat.color = flashCol;
+            burstMat.SetColor("_EmissionColor", flashCol * emStr);
+            burst.transform.localScale = Vector3.one * Mathf.SmoothStep(0f, 5f, k);
+
+            // Particles: grow in then fade as they speed outward.
+            for (int i = 0; i < ParticleCount; i++)
+            {
+                var (go, dir, spd, sz) = particles[i];
+                go.transform.position   = dir * spd * k * duration * 0.35f;
+                float pLife = Mathf.Clamp01(k * 3f);
+                float pFade = 1f - Mathf.Clamp01((k - 0.4f) / 0.6f);
+                go.transform.localScale = Vector3.one * sz * pLife * pFade;
+                Color pCol = Color.Lerp(new Color(1f, 0.9f, 0.5f), new Color(0.4f, 0.5f, 1f), k);
+                particleMat.SetColor("_EmissionColor", pCol * Mathf.Lerp(3f, 0.2f, k));
+                particleMat.color = pCol;
+            }
+
+            // Shock rings: expand fast and fade.
+            float ringK1 = Mathf.Clamp01(k * 4f);
+            float ringK2 = Mathf.Clamp01((k - 0.1f) * 4f);
+            ring1.transform.localScale = Vector3.one * Mathf.Lerp(0.1f, 14f, Mathf.SmoothStep(0f, 1f, ringK1));
+            ring2.transform.localScale = Vector3.one * Mathf.Lerp(0.1f, 20f, Mathf.SmoothStep(0f, 1f, ringK2));
+            SetRingAlpha(ring1, Mathf.Lerp(1f, 0f, ringK1 * ringK1));
+            SetRingAlpha(ring2, Mathf.Lerp(0.7f, 0f, ringK2 * ringK2));
+
+            // Subtle camera shake on the flash peak.
+            float shake = Mathf.Max(0f, 0.12f - k * 0.5f);
+            _cam.transform.position = new Vector3(
+                Random.Range(-shake, shake),
+                Random.Range(-shake, shake),
+                -15f + Random.Range(-shake * 0.5f, shake * 0.5f));
+            _cam.transform.LookAt(Vector3.zero);
+
             yield return null;
         }
+
         Destroy(burst);
+        for (int i = 0; i < ParticleCount; i++) Destroy(particles[i].go);
+        Destroy(ring1);
+        Destroy(ring2);
+
+        // Restore camera.
+        _cam.transform.position = new Vector3(0f, 0f, -15f);
+        _cam.transform.LookAt(Vector3.zero);
+    }
+
+    // Builds a flat disc GameObject (ring) with a transparent unlit material.
+    private static GameObject BuildRingGo(Vector3 center, float initialScale, Color color)
+    {
+        const int Segs = 48;
+        const float InnerR = 0.35f, OuterR = 0.5f;
+        var verts = new Vector3[Segs * 2];
+        var tris  = new int[Segs * 6];
+        var cols  = new Color[Segs * 2];
+        for (int i = 0; i < Segs; i++)
+        {
+            float a = (float)i / Segs * Mathf.PI * 2f;
+            float c = Mathf.Cos(a), s = Mathf.Sin(a);
+            verts[i * 2]     = new Vector3(c * InnerR, 0f, s * InnerR);
+            verts[i * 2 + 1] = new Vector3(c * OuterR, 0f, s * OuterR);
+            cols[i * 2] = cols[i * 2 + 1] = color;
+            int next = (i + 1) % Segs, b = i * 6;
+            tris[b]   = i*2;     tris[b+1] = next*2;   tris[b+2] = i*2+1;
+            tris[b+3] = next*2;  tris[b+4] = next*2+1; tris[b+5] = i*2+1;
+        }
+        var mesh = new Mesh { vertices = verts, triangles = tris, colors = cols };
+        mesh.RecalculateNormals();
+
+        var go  = new GameObject("ShockRing");
+        var mf  = go.AddComponent<MeshFilter>();
+        var mr  = go.AddComponent<MeshRenderer>();
+        mf.mesh = mesh;
+        mr.material = new Material(Shader.Find("Custom/VertexColorTransparentURP"));
+        go.transform.position   = center;
+        go.transform.localScale = Vector3.one * initialScale;
+        return go;
+    }
+
+    private static void SetRingAlpha(GameObject ring, float alpha)
+    {
+        var mr  = ring.GetComponent<MeshRenderer>();
+        var mf  = ring.GetComponent<MeshFilter>();
+        if (mr == null || mf == null) return;
+        Color[] cols = mf.mesh.colors;
+        for (int i = 0; i < cols.Length; i++) cols[i].a = alpha;
+        mf.mesh.colors = cols;
     }
 
     private IEnumerator PhaseStarFormation(Vector3 center, SolarSystemDef solarSystem, Transform parent)
@@ -275,9 +384,18 @@ public class GenesisCinematic : MonoBehaviour
     {
         float duration = EraTimeline.Phases[EraTimeline.IntroStartIndex + 2].DurationSeconds;
 
-        Vector3 starToCenter = (center - _starGo.transform.position).normalized;
-        var planetFinalScales = new List<Vector3>();
+        Vector3 starPos     = _starGo.transform.position;
+        Vector3 starToCenter = (center - starPos).normalized;
 
+        // Protoplanetary disk: a flat ring centred on the star in the plane of the solar system.
+        float diskOuter = Mathf.Sqrt(Mathf.Max(solarSystem.LifePlanetOrbitAU, 0.01f)) * VisualOrbitScale * 1.5f;
+        float diskInner = diskOuter * 0.08f;
+        GameObject diskGo = BuildDiskGo(starPos, diskInner, diskOuter, 72,
+            new Color(0.72f, 0.48f, 0.18f, 0.7f), new Color(0.45f, 0.30f, 0.10f, 0.0f));
+        // Tilt the disk ~15° from horizontal so it has visual depth.
+        diskGo.transform.rotation = Quaternion.Euler(15f, 0f, 0f);
+
+        var planetFinalScales = new List<Vector3>();
         foreach (var p in solarSystem.OtherPlanets)
         {
             float d = Mathf.Sqrt(Mathf.Max(p.OrbitAU, 0.01f)) * VisualOrbitScale;
@@ -285,10 +403,8 @@ public class GenesisCinematic : MonoBehaviour
             go.name = $"Planet_{p.Kind}";
             go.transform.SetParent(parent);
             Destroy(go.GetComponent<Collider>());
-            go.transform.position = _starGo.transform.position + starToCenter * d
+            go.transform.position = starPos + starToCenter * d
                 + Vector3.up * Random.Range(-3f, 3f) + Vector3.forward * Random.Range(-10f, 10f);
-            // Decorative planets are scaled relative to the small INTRO display size,
-            // not the full gameplay planetRadius, so they stay proportionate.
             Vector3 finalScale = Vector3.one * p.RelativeSize * IntroDisplayRadius * 0.6f;
             go.transform.localScale = Vector3.zero;
             Material mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
@@ -298,20 +414,65 @@ public class GenesisCinematic : MonoBehaviour
             planetFinalScales.Add(finalScale);
         }
 
-        // Life planet accretes to its small INTRO display scale here - it only grows to
-        // true gameplay size once the camera is close, at the start of Molten Bombardment.
         Vector3 lifePlanetIntroScale = Vector3.one * (IntroDisplayRadius / _planetRadius);
         float t = 0f;
         while (t < duration)
         {
             t += Time.deltaTime;
             float k = Mathf.SmoothStep(0f, 1f, t / duration);
+
+            // Disk: bright early then fades as planets coalesce.
+            float diskFade = 1f - Mathf.Clamp01((k - 0.4f) / 0.6f);
+            SetDiskAlpha(diskGo, diskFade * 0.7f, diskFade * 0f);
+            diskGo.transform.Rotate(Vector3.up, 8f * Time.deltaTime); // slow spin
+
             for (int i = 0; i < _otherPlanetGos.Count; i++)
                 _otherPlanetGos[i].transform.localScale = planetFinalScales[i] * Mathf.Clamp01(k * 1.3f - 0.1f * i);
             _lifePlanetGo.transform.localScale = lifePlanetIntroScale * k;
             yield return null;
         }
         _lifePlanetGo.transform.localScale = lifePlanetIntroScale;
+        Destroy(diskGo);
+    }
+
+    /// Builds a flat shaded disc mesh (inner → outer gradient) as a new GameObject.
+    private static GameObject BuildDiskGo(Vector3 center, float inner, float outer, int segs,
+        Color innerColor, Color outerColor)
+    {
+        var verts = new Vector3[segs * 2];
+        var tris  = new int[segs * 6];
+        var cols  = new Color[segs * 2];
+        for (int i = 0; i < segs; i++)
+        {
+            float a = (float)i / segs * Mathf.PI * 2f;
+            float c = Mathf.Cos(a), s = Mathf.Sin(a);
+            verts[i * 2]     = new Vector3(c * inner, 0f, s * inner);
+            verts[i * 2 + 1] = new Vector3(c * outer, 0f, s * outer);
+            cols[i * 2]      = innerColor;
+            cols[i * 2 + 1]  = outerColor;
+            int next = (i + 1) % segs, b = i * 6;
+            tris[b]   = i*2;     tris[b+1] = next*2;   tris[b+2] = i*2+1;
+            tris[b+3] = next*2;  tris[b+4] = next*2+1; tris[b+5] = i*2+1;
+        }
+        var mesh = new Mesh { vertices = verts, triangles = tris, colors = cols };
+        mesh.RecalculateNormals();
+
+        var go = new GameObject("ProtoplanetaryDisk");
+        go.AddComponent<MeshFilter>().mesh = mesh;
+        go.AddComponent<MeshRenderer>().material =
+            new Material(Shader.Find("Custom/VertexColorTransparentURP"));
+        go.transform.position = center;
+        return go;
+    }
+
+    private static void SetDiskAlpha(GameObject diskGo, float innerAlpha, float outerAlpha)
+    {
+        var mf = diskGo.GetComponent<MeshFilter>();
+        if (mf == null) return;
+        Color[] cols = mf.mesh.colors;
+        for (int i = 0; i < cols.Length; i++)
+            cols[i].a = (i % 2 == 0) ? innerAlpha : outerAlpha;
+        mf.mesh.colors = cols;
     }
 
     private IEnumerator PhaseSystemSettles(Vector3 center, float planetRadius, SolarSystemDef solarSystem)
@@ -503,6 +664,52 @@ public class GenesisCinematic : MonoBehaviour
         {
             _lerpVerts[i] = Vector3.Lerp(a.Vertices[i], b.Vertices[i], t);
             _lerpColors[i] = Color.Lerp(a.Colors[i], b.Colors[i], t);
+        }
+    }
+
+    // ── Cell Division Cinematic ───────────────────────────────────────────────
+    // Plays at the very end of the genesis montage: camera zooms in to the primordial
+    // ocean surface and we watch a single ancestor cell divide 8 times to produce 8
+    // founding communities, all at the same location (no locomotion yet). Each of the
+    // 8 then divides 2-3 more times so the communities are visually seeded before
+    // SimulationBootstrap spawns the real agents.
+    //
+    // Planet is still at IntroDisplayRadius scale here (not full gameplay scale).
+
+    /// Brief camera orbit over the planet surface. Calls _onComplete after, which triggers
+    /// SimulationBootstrap to spawn the real game agents — so no fake cells are needed.
+    private IEnumerator PhaseFirstLifeEmerges(Vector3 center, float planetRadius)
+    {
+        const float duration    = 5f;
+        const float orbitRadius = 1.6f; // multiples of IntroDisplayRadius
+        float introR = IntroDisplayRadius;
+
+        // Pull camera to a low orbit angle above the surface.
+        Vector3 camStart = _cam.transform.position;
+        Vector3 orbitStart = center + new Vector3(0f, introR * 0.4f, -introR * orbitRadius);
+        float pullT = 0f;
+        const float pullDuration = 1.2f;
+        while (pullT < pullDuration)
+        {
+            pullT += Time.deltaTime;
+            float k = Mathf.SmoothStep(0f, 1f, pullT / pullDuration);
+            _cam.transform.position = Vector3.Lerp(camStart, orbitStart, k);
+            _cam.transform.LookAt(center);
+            yield return null;
+        }
+
+        // Gentle orbit around the planet — real organisms will appear here after _onComplete.
+        float orbitT = 0f;
+        float remainingDuration = duration - pullDuration;
+        while (orbitT < remainingDuration)
+        {
+            orbitT += Time.deltaTime;
+            float angle = orbitT / remainingDuration * 60f * Mathf.Deg2Rad; // 60° arc
+            float x = Mathf.Sin(angle) * introR * orbitRadius;
+            float z = -Mathf.Cos(angle) * introR * orbitRadius;
+            _cam.transform.position = center + new Vector3(x, introR * 0.35f, z);
+            _cam.transform.LookAt(center);
+            yield return null;
         }
     }
 

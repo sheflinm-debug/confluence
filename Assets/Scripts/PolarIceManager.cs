@@ -20,7 +20,7 @@ public class PolarIceManager : MonoBehaviour
     public float iceShellOffset = 0.08f;
 
     [Tooltip("Real-time seconds between ice-cap mesh rebuilds. Seasonal shift is slow.")]
-    public float rebuildInterval = 12f;
+    public float rebuildInterval = 45f;
 
     private TectonicResult _tectonics;
     private Vector3 _planetCenter;
@@ -36,8 +36,14 @@ public class PolarIceManager : MonoBehaviour
     // Glacier white with a faint blue tint, slightly transparent.
     private static readonly Color IceColor = new Color(0.92f, 0.96f, 1.0f, 0.88f);
 
+    // Actual planetary temperature in Kelvin, set at Init from PlanetTemperature.
+    // Ice is only possible below this cutoff — hot volcanic worlds have none.
+    // Above 340K: too warm for water ice even at the poles (slight margin above 273K
+    // to account for pressure/composition). Below 200K: maximum ice coverage.
+    private float _planetTempK = 280f;
+
     public void Init(TectonicResult tectonics, Vector3 planetCenter, float planetRadius,
-        float elevationWorldScale, Transform parent)
+        float elevationWorldScale, Transform parent, float planetTempK = 280f)
     {
         Instance = this;
         _tectonics = tectonics;
@@ -45,6 +51,7 @@ public class PolarIceManager : MonoBehaviour
         _planetRadius = planetRadius;
         _elevationWorldScale = elevationWorldScale;
         _parent = parent;
+        _planetTempK = planetTempK;
 
         Shader shader = Shader.Find("Custom/VertexColorTransparentURP");
         Material mat = new Material(shader);
@@ -83,6 +90,19 @@ public class PolarIceManager : MonoBehaviour
     {
         if (_tectonics == null || _iceMesh == null) return;
 
+        // Scale the abstract freeze threshold by actual planetary temperature.
+        // Above 340K: no ice possible (too hot for water ice even at poles).
+        // Below 200K: full threshold — arctic world, ice forms readily.
+        // Between: linear scale so warmer worlds have thinner/smaller polar caps.
+        float tempFactor = Mathf.Clamp01(1f - (_planetTempK - 200f) / 140f);
+        float effectiveThreshold = freezeThreshold * tempFactor;
+        if (effectiveThreshold <= 0.5f)
+        {
+            // Planet is too hot for any ice — hide the overlay entirely.
+            _iceGo.SetActive(false);
+            return;
+        }
+
         var unitVerts = _tectonics.UnitVerts;
         var triangles = _tectonics.Triangles;
 
@@ -94,15 +114,30 @@ public class PolarIceManager : MonoBehaviour
         {
             int ia = triangles[i], ib = triangles[i + 1], ic = triangles[i + 2];
 
-            // Evaluate temperature at face centroid (world position on sphere surface).
+            // Use pure latitude for ice boundary — ignore weather/storm temperature
+            // modifiers so storms can't make polar caps visibly pulse. Ice is a
+            // geological-timescale feature, not a weather feature.
             Vector3 centroidUnit = (unitVerts[ia] + unitVerts[ib] + unitVerts[ic]).normalized;
-            Vector3 centroidWorld = _planetCenter + centroidUnit * _planetRadius;
-            float temp = ClimateManager.GetTemperature(centroidWorld);
-            if (temp >= freezeThreshold) continue;
+            float latitudeSin = Mathf.Abs(centroidUnit.y); // 0=equator, 1=pole
+            // Map latitude to abstract 0-100 temperature: equator ~noise-driven,
+            // poles cold by the same 45-unit gradient ClimateManager uses —
+            // but without the weather noise so the boundary stays stable.
+            float latTemp = 50f - latitudeSin * latitudeSin * 45f;
 
-            // Fade opacity as temperature approaches the threshold, so the ice-line
-            // has a soft edge rather than a hard geometric cut.
-            float freeze = 1f - Mathf.SmoothStep(0f, freezeThreshold, temp);
+            // Add only seasonal orbital flux (slow, planet-scale) — not storm noise.
+            float seasonalDelta = 0f;
+            if (OrbitalSeasons.Instance != null && OrbitalSeasons.Instance.AxialTiltDeg > 0.001f)
+            {
+                float fluxMul = OrbitalSeasons.Instance.FluxMultiplier;
+                float seasonalMul = OrbitalSeasons.Instance.SeasonalExposureMultiplier(centroidUnit.y);
+                seasonalDelta = (fluxMul * seasonalMul - 1f) * 20f;
+            }
+
+            float temp = Mathf.Clamp(latTemp + seasonalDelta, 0f, 100f);
+            if (temp >= effectiveThreshold) continue;
+
+            // Fade opacity as temperature approaches the threshold.
+            float freeze = 1f - Mathf.SmoothStep(0f, effectiveThreshold, temp);
             Color c = new Color(IceColor.r, IceColor.g, IceColor.b, IceColor.a * freeze);
 
             // Shell slightly above terrain to avoid z-fighting with the terrain mesh.

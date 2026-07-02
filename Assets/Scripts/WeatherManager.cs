@@ -163,6 +163,18 @@ public class WeatherManager : MonoBehaviour
         return total;
     }
 
+    /// Returns 0..1 combined storm intensity at worldPosition (max across all active storms).
+    public float GetStormIntensityAt(Vector3 worldPosition)
+    {
+        float best = 0f;
+        foreach (var storm in _storms)
+        {
+            float f = Footprint(storm, worldPosition) * storm.Intensity;
+            if (f > best) best = f;
+        }
+        return best;
+    }
+
     /// 0..1 falloff from storm center using great-circle (geodesic) distance on the
     /// sphere, smoothstepped to zero at the storm's radius.
     private float Footprint(StormCell storm, Vector3 worldPosition)
@@ -177,7 +189,7 @@ public class WeatherManager : MonoBehaviour
 
     void OnGUI()
     {
-        if (_storms.Count == 0) return;
+        if (_storms.Count == 0 || GameHUD.SuppressRawOverlays) return;
         float x = 10f, y = 60f;
         GUI.Label(new Rect(x, y, 260f, 18f), $"Active storms: {_storms.Count}");
     }

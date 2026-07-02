@@ -12,7 +12,7 @@ public class CorpseSpawner : MonoBehaviour
 
     public List<CorpseItem> ActiveCorpses { get; } = new List<CorpseItem>();
 
-    public void SpawnCorpseAt(Vector3 position)
+    public void SpawnCorpseAt(Vector3 position, float bodyMass = 0.001f)
     {
         if (corpsePrefab == null) return;
 
@@ -23,6 +23,7 @@ public class CorpseSpawner : MonoBehaviour
         if (corpse == null) corpse = go.AddComponent<CorpseItem>();
         corpse.spawner = this;
         corpse.decayTime = decayTime;
+        corpse.BodyMass = bodyMass;
 
         ActiveCorpses.Add(corpse);
     }

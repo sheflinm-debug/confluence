@@ -16,6 +16,7 @@ public class PopulationStatsOverlay : MonoBehaviour
 
     void OnGUI()
     {
+        if (GameHUD.SuppressRawOverlays) return;
         var (visionMean, visionVariance) = PopulationStats.VisionStats;
         var (speedMean, speedVariance) = PopulationStats.SpeedStats;
         var (strengthMean, strengthVariance) = PopulationStats.StrengthStats;

@@ -1,7 +1,17 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public enum BackboneElement { Carbon, Silicon }
+public enum BackboneElement
+{
+    Carbon,    // ★★★★ confirmed; electrochemical neural signaling, water solvent
+    Silicon,   // ★★★  semiconductor signaling, fluorocarbon solvent, O2 lethal
+    Germanium, // ★★   like silicon, narrower bandgap, thermally sensitive
+    Tin,       // ★★   metallic/semi dual-phase, phase-change excitability
+    Boron,     // ★★   proton/photonic signaling, anhydrous solvent
+    Nitrogen,  // ★★   ammonium-gradient in liquid ammonia, very slow
+    Phosphorus,// ★★   phosphorylation-cascade signaling, high metabolic cost
+    Sulfur,    // ★★   redox-wave (disulfide cycling), hot volcanic worlds
+}
 
 /// A candidate metabolism: backbone element + which gas it breathes in and which it
 /// expels. Rolled SEPARATELY from the atmosphere composition and only loosely
@@ -40,8 +50,32 @@ public static class OrganismBiochemistryTable
             CompatibleTypes = new[] { "CO2-dominant (Venus/Mars-type)" } },
 
         new BiochemistryDef { Backbone = BackboneElement.Silicon, Name = "Silicon-based vapor metabolism",
-            BreathedGas = "CO2", ExpelledGas = "SiO",
+            BreathedGas = "F2", ExpelledGas = "SiF4",
             CompatibleTypes = new[] { "Silicate / mineral vapor" } },
+
+        new BiochemistryDef { Backbone = BackboneElement.Germanium, Name = "Germanium-based fluoride metabolism",
+            BreathedGas = "F2", ExpelledGas = "GeF4",
+            CompatibleTypes = new[] { "Silicate / mineral vapor" } },
+
+        new BiochemistryDef { Backbone = BackboneElement.Tin, Name = "Tin-based fluoride metabolism",
+            BreathedGas = "F2", ExpelledGas = "SnF4",
+            CompatibleTypes = new[] { "Silicate / mineral vapor" } },
+
+        new BiochemistryDef { Backbone = BackboneElement.Boron, Name = "Boron-based diborane metabolism",
+            BreathedGas = "H2", ExpelledGas = "B2H6",
+            CompatibleTypes = new[] { "CH4-N2 reducing" } },
+
+        new BiochemistryDef { Backbone = BackboneElement.Nitrogen, Name = "Nitrogen-based ammonia metabolism",
+            BreathedGas = "NH3", ExpelledGas = "N2",
+            CompatibleTypes = new[] { "N2-CO2 (Titan-thick)" } },
+
+        new BiochemistryDef { Backbone = BackboneElement.Phosphorus, Name = "Phosphorus-based phosphine metabolism",
+            BreathedGas = "H2", ExpelledGas = "PH3",
+            CompatibleTypes = new[] { "CH4-N2 reducing", "Carbon-rich (CO/CO2 reducing)" } },
+
+        new BiochemistryDef { Backbone = BackboneElement.Sulfur, Name = "Sulfur-based H2S metabolism",
+            BreathedGas = "H2S", ExpelledGas = "SO2",
+            CompatibleTypes = new[] { "SO2-H2S volcanic" } },
     };
 
     /// Weighted roll: entries whose CompatibleTypes lists the rolled atmosphere type

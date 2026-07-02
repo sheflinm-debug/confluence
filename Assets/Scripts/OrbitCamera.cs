@@ -54,7 +54,11 @@ public class OrbitCamera : MonoBehaviour
         if (mouse != null)
         {
             float scroll = mouse.scroll.ReadValue().y;
-            distance -= scroll * scrollSpeed * Time.deltaTime;
+            // Suppress zoom when the cursor is over a UI panel (HUD, pause menu, etc.)
+            bool uiBlocking = GameHUD.IsScrollBlockedAtScreenPos(mouse.position.ReadValue())
+                           || PauseMenuManager.IsOpen;
+            if (scroll != 0f && !uiBlocking)
+                distance -= scroll * scrollSpeed * Time.deltaTime;
         }
 
         if (keyboard != null)
@@ -75,6 +79,7 @@ public class OrbitCamera : MonoBehaviour
 
     void OnGUI()
     {
+        if (GameHUD.SuppressRawOverlays) return;
         string label = PlanetLockEnabled ? "[L] Planet-lock: ON" : "[L] Planet-lock: OFF";
         Color c = PlanetLockEnabled ? new Color(0.4f, 1f, 0.5f) : new Color(0.7f, 0.7f, 0.7f);
         GUIStyle style = new GUIStyle(GUI.skin.label) { fontSize = 13 };
@@ -88,6 +93,20 @@ public class OrbitCamera : MonoBehaviour
     {
         Reposition();
     }
+
+    /// Swing the camera to face the given world-space direction from the planet center
+    /// and zoom in to zoomDistance. Used to auto-focus on the founding organism at spawn.
+    public void FocusOnDirection(Vector3 worldDir, float zoomDistance = 15f)
+    {
+        Vector3 d = worldDir.normalized;
+        _pitch = Mathf.Asin(Mathf.Clamp(d.y, -1f, 1f)) * Mathf.Rad2Deg;
+        _yaw   = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
+        distance = zoomDistance;
+        Reposition();
+    }
+
+    public void EnablePlanetLock()  { PlanetLockEnabled = true;  }
+    public void DisablePlanetLock() { PlanetLockEnabled = false; }
 
     private void Reposition()
     {

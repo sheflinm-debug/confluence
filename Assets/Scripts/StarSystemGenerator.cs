@@ -96,10 +96,13 @@ public static class StarSystemGenerator
             Color = cls.Color,
         };
 
-        // Teq = 278 * L^0.25 / sqrt(d)  =>  d = (278 * L^0.25 / Teq)^2
-        float lQuarter = Mathf.Pow(star.LuminositySolar, 0.25f);
-        float orbitAU = Mathf.Pow(278f * lQuarter / Mathf.Max(targetEquilibriumK, 1f), 2f);
-        orbitAU = Mathf.Clamp(orbitAU, 0.03f, 60f);
+        // Life planet always orbits inside the habitable zone. Surface temperature is
+        // separately determined by atmosphere type (greenhouse effects mean surface temp
+        // can differ greatly from equilibrium orbital temp — Venus is in the HZ at 735K).
+        float hzInner = Mathf.Sqrt(star.LuminositySolar / 1.1f);
+        float hzOuter = Mathf.Sqrt(star.LuminositySolar / 0.53f);
+        float orbitAU = Random.Range(hzInner, hzOuter);
+        _ = targetEquilibriumK; // kept for API compatibility
 
         var others = new List<DecorativePlanetDef>();
         int otherCount = Random.Range(3, 8);
@@ -164,10 +167,10 @@ public static class StarSystemGenerator
             {
                 RelativeSize = relSize,
                 RelativeMass = Mathf.Pow(relSize, 3f) * Random.Range(0.6f, 1.4f), // mass ~ size^3 * density roll
-                // Spread successive moons out so they don't overlap/collide visually -
-                // each one orbits further out than the last, in parent-radius multiples.
-                OrbitDistance = 2.2f + i * 1.4f + Random.Range(0f, 0.6f),
-                OrbitalPeriodSeconds = Random.Range(20f, 70f) + i * 15f, // outer moons orbit slower, same as Kepler's 3rd law in spirit
+                // Spread successive moons well outside the Roche limit -
+                // first moon at ~5-7 parent radii, next at ~8-12, etc.
+                OrbitDistance = 5.5f + i * 3.5f + Random.Range(0f, 1.5f),
+                OrbitalPeriodSeconds = Random.Range(30f, 80f) + i * 25f, // outer moons orbit slower, same as Kepler's 3rd law in spirit
                 StartAngleRad = Random.Range(0f, Mathf.PI * 2f),
                 Color = Color.Lerp(new Color(0.55f, 0.55f, 0.58f), new Color(0.85f, 0.82f, 0.78f), Random.value),
             });

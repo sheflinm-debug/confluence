@@ -37,7 +37,7 @@ public static class AtmosphereColorTable
         switch (type.Name)
         {
             case "CO2-dominant (Venus/Mars-type)" when pressureBar > type.OpaquePressureThreshold:
-                return (new Color(0.90f, 0.85f, 0.55f), 0.72f); // sulfuric acid cloud deck
+                return (new Color(0.90f, 0.85f, 0.55f), 0.38f); // sulfuric acid cloud deck — capped for playability
             case "N2-CO2 (Titan-thick)":
             case "CH4-N2 reducing":
                 return (new Color(0.75f, 0.5f, 0.25f), 0.5f); // organic tholin haze

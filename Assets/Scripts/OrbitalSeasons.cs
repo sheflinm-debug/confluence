@@ -123,7 +123,7 @@ public class OrbitalSeasons : MonoBehaviour
 
     void OnGUI()
     {
-        if (!_running) return;
+        if (!_running || GameHUD.SuppressRawOverlays) return;
         float deltaK = ApproxSeasonalDeltaK(PlanetTemperature.Instance != null ? PlanetTemperature.Instance.CurrentK : 280f);
         GUI.Label(new Rect(10, 50, 420, 20),
             $"Orbit: {OrbitalPhase01 * 100f:F0}% (d={CurrentDistanceAU:F3} AU, e={Eccentricity:F2}, tilt={AxialTiltDeg:F0} deg)");

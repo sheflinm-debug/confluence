@@ -66,8 +66,8 @@ public class AtmosphereManager : MonoBehaviour
         // Expelled roles exist until a compatible organism biochemistry is rolled below.
         var (name0, min0, max0) = RolledType.DominantSpecies[0];
         var (name1, min1, max1) = RolledType.DominantSpecies[1];
-        _gases.Add(new GasDefinition { Name = name0, Fraction = Random.Range(min0, max0), Role = GasRole.Trace });
-        _gases.Add(new GasDefinition { Name = name1, Fraction = Random.Range(min1, max1), Role = GasRole.Trace });
+        _gases.Add(GasDefinition.Make(name0, Random.Range(min0, max0)));
+        _gases.Add(GasDefinition.Make(name1, Random.Range(min1, max1)));
 
         int traceCount = Random.Range(1, 4);
         var pool = new List<string>(RolledType.TracePool);
@@ -77,7 +77,7 @@ public class AtmosphereManager : MonoBehaviour
             string name = pool[idx];
             pool.RemoveAt(idx);
             if (name == name0 || name == name1) continue;
-            _gases.Add(new GasDefinition { Name = name, Fraction = Random.Range(0.0001f, 0.02f), Role = GasRole.Trace });
+            _gases.Add(GasDefinition.Make(name, Random.Range(0.0001f, 0.02f)));
         }
 
         NormalizeFractions();
@@ -99,7 +99,7 @@ public class AtmosphereManager : MonoBehaviour
         GasDefinition breathed = FindGas(biochem.BreathedGas);
         if (breathed == null)
         {
-            breathed = new GasDefinition { Name = biochem.BreathedGas, Fraction = 0.05f };
+            breathed = GasDefinition.Make(biochem.BreathedGas, 0.05f);
             _gases.Add(breathed);
         }
         breathed.Role = GasRole.Breathed;
@@ -108,7 +108,7 @@ public class AtmosphereManager : MonoBehaviour
         GasDefinition expelled = FindGas(biochem.ExpelledGas);
         if (expelled == null)
         {
-            expelled = new GasDefinition { Name = biochem.ExpelledGas, Fraction = 0f };
+            expelled = GasDefinition.Make(biochem.ExpelledGas, 0f);
             _gases.Add(expelled);
         }
         expelled.Role = GasRole.Expelled;
@@ -127,36 +127,52 @@ public class AtmosphereManager : MonoBehaviour
     {
         if (_agentSpawner == null) return;
 
+        // Update UV ozone shield and chemical nutrient pool each frame.
+        UVManager.UpdateOzone(this);
+        ChemicalNutrientPool.Replenish(Time.deltaTime);
+
         GasDefinition breathed = GetGasByRole(GasRole.Breathed);
         GasDefinition expelled = GetGasByRole(GasRole.Expelled);
 
-        int consumerCount = 0, producerCount = 0;
-        float producerSolarSum = 0f;
+        // Gas exchange is metabolism-specific:
+        //   Chemosynthetic  → no atmospheric exchange (energy from ChemicalNutrientPool only)
+        //   Phototrophic    → solar-dependent reverse exchange (consume Expelled, produce Breathed)
+        //                     this is the driver of the Great Gas Event once photosynthesis evolves
+        //   Heterotrophic   → consume Breathed, produce Expelled (standard respiration)
+        int heterotrophCount = 0, phototrophCount = 0;
+        float phototrophSolarSum = 0f;
         foreach (var agent in _agentSpawner.ActiveAgents)
         {
             if (agent == null) continue;
-            if (agent.IsProducer)
+            switch (agent.Metabolism)
             {
-                producerCount++;
-                if (_dayNight != null)
-                {
-                    Vector3 normal = (agent.transform.position - agent.planetCenter).normalized;
-                    producerSolarSum += _dayNight.SolarExposure(normal);
-                }
-                else producerSolarSum += 0.5f;
+                case MetabolismType.Phototrophic:
+                    phototrophCount++;
+                    if (_dayNight != null)
+                    {
+                        Vector3 normal = (agent.transform.position - agent.planetCenter).normalized;
+                        phototrophSolarSum += _dayNight.SolarExposure(normal);
+                    }
+                    else phototrophSolarSum += 0.5f;
+                    break;
+                case MetabolismType.Heterotrophic:
+                    heterotrophCount++;
+                    break;
+                // Chemosynthetic: no case — zero atmospheric exchange
             }
-            else consumerCount++;
         }
-        float producerSolarAvg = producerCount > 0 ? producerSolarSum / producerCount : 0f;
+        float phototrophSolarAvg = phototrophCount > 0 ? phototrophSolarSum / phototrophCount : 0f;
 
         float dt = Time.deltaTime;
         _gameTimeElapsed += dt;
 
-        float consumerExchange = respirationRate * consumerCount * dt;
+        // Heterotrophs breathe Breathed gas and exhale Expelled.
+        float consumerExchange = respirationRate * heterotrophCount * dt;
         if (breathed != null) breathed.Fraction -= consumerExchange;
         if (expelled != null) expelled.Fraction += consumerExchange;
 
-        float producerExchange = respirationRate * producerCount * dt * producerSolarAvg;
+        // Phototrophics run the exchange in reverse on the day side.
+        float producerExchange = respirationRate * phototrophCount * dt * phototrophSolarAvg;
         if (expelled != null) expelled.Fraction -= producerExchange;
         if (breathed != null) breathed.Fraction += producerExchange;
 
@@ -174,7 +190,8 @@ public class AtmosphereManager : MonoBehaviour
         if (!gasEventAllowed && _gameTimeElapsed >= 45f)
             gasEventAllowed = true;
 
-        if (!GreatGasEventFired && gasEventAllowed && breathed != null && breathed.CrisisLow > 0f && breathed.Fraction < breathed.CrisisLow)
+        bool hasLife = _agentSpawner != null && _agentSpawner.ActiveAgents.Count > 0;
+        if (!GreatGasEventFired && gasEventAllowed && hasLife && breathed != null && breathed.CrisisLow > 0f && breathed.Fraction < breathed.CrisisLow)
         {
             GreatGasEventFired = true;
             FireGreatGasEvent();
@@ -188,10 +205,40 @@ public class AtmosphereManager : MonoBehaviour
 
         if (_crisisFlashTimer > 0f)
             _crisisFlashTimer -= Time.deltaTime;
-        if (!_expelledGlutFired && expelled != null && expelled.Fraction > expelled.CrisisHigh)
+        // Same guard as GreatGasEvent: don't fire if we're still in the intro/genesis
+        // phase or no life exists yet. ExpelledGlut requires exhaled-gas buildup from a
+        // real population, not just the initial atmospheric composition.
+        if (!_expelledGlutFired && gasEventAllowed
+            && _agentSpawner != null && _agentSpawner.ActiveAgents.Count > 0
+            && expelled != null && expelled.Fraction > expelled.CrisisHigh)
         {
             _expelledGlutFired = true;
             GeneEvolutionManager.QueueAtmosphereEvent("ExpelledGlutEvent");
+        }
+
+        // Jeans escape: light gases (H2, He) bleed off based on escape velocity vs
+        // thermal velocity. Rate ∝ (v_thermal/v_escape)² — bound atmospheres lose very
+        // little; thin/low-gravity ones lose light gas quickly. Magnetosphere presence
+        // suppresses solar-wind stripping by 20×.
+        if (PlanetGravity.Instance != null)
+        {
+            float vEsc    = PlanetGravity.Instance.EscapeVelocityMs;
+            float tempK   = PlanetTemperature.Instance != null ? PlanetTemperature.Instance.CurrentK : 300f;
+            float magMult = PlanetGravity.Instance.HasMagnetosphere ? 0.05f : 1.0f;
+            float dtSec   = Time.deltaTime;
+            bool stripped = false;
+            foreach (var gas in _gases)
+            {
+                float molMassKg = gas.Name switch { "H2" => 3.34e-27f, "He" => 6.68e-27f, _ => 0f };
+                if (molMassKg <= 0f) continue;
+                float vThermal  = Mathf.Sqrt(2f * 1.38e-23f * tempK / molMassKg);
+                float ratio     = vThermal / Mathf.Max(vEsc, 1f);
+                float jeansRate = ratio * ratio * magMult * 0.05f; // gameplay-scaled; physically ordered
+                gas.Fraction   -= jeansRate * gas.Fraction * dtSec;
+                gas.Fraction    = Mathf.Max(0f, gas.Fraction);
+                stripped = true;
+            }
+            if (stripped) NormalizeFractions();
         }
     }
 
@@ -215,6 +262,20 @@ public class AtmosphereManager : MonoBehaviour
         return 0f;
     }
 
+    /// Adds `amount` to the named gas's fraction (creating the gas as Trace if absent).
+    /// Called by FluidDynamicsManager when sublimation injects a solid directly into gas phase.
+    public void AddGasFraction(string name, float amount)
+    {
+        GasDefinition gas = FindGas(name);
+        if (gas == null)
+        {
+            gas = GasDefinition.Make(name, 0f, GasRole.Trace);
+            _gases.Add(gas);
+        }
+        gas.Fraction = Mathf.Max(0f, gas.Fraction + amount);
+        NormalizeFractions();
+    }
+
     /// Snapshot of the current atmosphere composition, keyed by gas name. Used by
     /// AgentController to lock in a new "ideal mix" at genesis or speciation.
     public Dictionary<string, float> SnapshotMix()
@@ -224,6 +285,7 @@ public class AtmosphereManager : MonoBehaviour
         return mix;
     }
 
+    public float AtmosphericStress => AverageAtmosphericStress();
     private float AverageAtmosphericStress()
     {
         if (_agentSpawner == null || _agentSpawner.ActiveAgents.Count == 0) return 0f;
@@ -280,6 +342,8 @@ public class AtmosphereManager : MonoBehaviour
             GUI.skin.label.fontSize = 0; // reset to default
             GUI.color = prev;
         }
+
+        if (GameHUD.SuppressRawOverlays) return;
 
         float barWidth = 220f;
         float barHeight = 16f;
