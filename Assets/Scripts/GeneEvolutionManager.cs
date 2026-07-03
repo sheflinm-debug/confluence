@@ -76,6 +76,9 @@ public class GeneEvolutionManager : MonoBehaviour
             if (!PrerequisitesMet(agent, gene)) continue;
             if (gene.IsEligible != null && !gene.IsEligible(agent)) continue;
 
+            // d3_* decisions are handled entirely by Era3HUD tabs — skip popup flow.
+            if (gene.Id.StartsWith("d3_")) continue;
+
             // --- auto-only genes (no choices) fire immediately for everyone ---
             if (gene.Choices == null || gene.Choices.Length == 0)
             {
@@ -221,6 +224,7 @@ public class GeneEvolutionManager : MonoBehaviour
         _btnStyle.hover.background   = _btnHoverTex;
         _btnStyle.normal.textColor   = Color.white;
         _btnStyle.hover.textColor    = Color.white;
+        _btnStyle.richText           = true;
 
         _learnMoreStyle = new GUIStyle(GUI.skin.label)
         {
@@ -393,11 +397,13 @@ public class GeneEvolutionManager : MonoBehaviour
             if (choiceTex != null)
                 GUI.DrawTexture(new Rect(btnRect.x + 8, btnRect.y + (BTN_H - ICON_SZ) / 2f, ICON_SZ, ICON_SZ), choiceTex, ScaleMode.ScaleToFit);
 
-            // Choice label: short label from UI data, or fallback to full choice label
+            // Choice label + terse parenthetical hint
             string shortLabel = (hasUI && s < ui.Choices.Length) ? ui.Choices[s].Label : null;
-            string btnText = string.IsNullOrEmpty(shortLabel)
-                ? $"{s + 1}: {choice.Label}"
-                : $"{s + 1}: {shortLabel}";
+            string hint       = (hasUI && s < ui.Choices.Length) ? ui.Choices[s].Hint  : null;
+            string baseText   = string.IsNullOrEmpty(shortLabel) ? $"{s + 1}: {choice.Label}" : $"{s + 1}: {shortLabel}";
+            string btnText    = string.IsNullOrEmpty(hint)
+                ? baseText
+                : $"{baseText}  <color=#888888><size=10>({hint})</size></color>";
             GUI.Label(new Rect(btnRect.x + 34, btnRect.y, btnRect.width - 40, BTN_H), btnText, _btnStyle);
 
             bool clicked    = GUI.Button(btnRect, "", GUIStyle.none);

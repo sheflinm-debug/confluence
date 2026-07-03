@@ -420,6 +420,12 @@ public class SimulationBootstrap : MonoBehaviour
                 // All biological diversity emerges via SpeciationManager from the single
                 // founding lineage — no pre-seeded NPC communities.
 
+                EraPostProcessManager postProcess = gameObject.AddComponent<EraPostProcessManager>();
+                AudioManager audioManager = gameObject.AddComponent<AudioManager>();
+                audioManager.Init(agentSpawner);
+                audioManager.OnIntroBegin();
+                postProcess.OnIntroBegin();
+
                 SpeciationManager speciationManager = gameObject.AddComponent<SpeciationManager>();
                 speciationManager.Init(agentSpawner);
 
@@ -428,6 +434,10 @@ public class SimulationBootstrap : MonoBehaviour
 
                 Era2Manager era2Manager = gameObject.AddComponent<Era2Manager>();
                 era2Manager.Init(agentSpawner);
+
+                Era3Manager era3Manager = gameObject.AddComponent<Era3Manager>();
+                era3Manager.Init(agentSpawner);
+                gameObject.AddComponent<Era3HUD>();
 
                 SpeciesRelationshipManager speciesRelMgr = gameObject.AddComponent<SpeciesRelationshipManager>();
                 speciesRelMgr.Init(agentSpawner);

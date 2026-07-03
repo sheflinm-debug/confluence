@@ -2,9 +2,9 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// Drives per-era gameplay changes for Era 1's six sub-phases (Abiogenesis through
-/// Cambrian Explosion), keyed to DeepTimeClock's current phase index. Each era:
+/// Morphological Complexity Threshold), keyed to DeepTimeClock's current phase index. Each era:
 ///   - Sets a target visual scale for all agents (microbe → macroscopic creature)
-///   - Enforces a population cap (tiny primordial pool → Cambrian biodiversity burst)
+///   - Enforces a population cap (tiny primordial pool → complexity-threshold biodiversity burst)
 ///   - Shows a brief era-transition flash on screen
 ///
 /// Wired up in SimulationBootstrap's onComplete callback, same as SpeciationManager.
@@ -17,12 +17,12 @@ public class EraManager : MonoBehaviour
     // Seconds the era-transition banner stays on screen.
     private const float FlashDuration = 4f;
 
-    // Per-Era1-subphase properties. Index 0 = Abiogenesis, 5 = Cambrian Explosion.
+    // Per-Era1-subphase properties. Index 0 = Abiogenesis, 5 = Morphological Complexity Threshold.
     // EraTimeline.Era1StartIndex = 8, so era sub-phase 0 = phase index 8.
     private static readonly float[] AgentScalePerEra    = { 0.05f, 0.08f, 0.10f, 0.15f, 0.22f, 0.32f };
-    // Abiogenesis: sparse (15). Prokaryotic Seas: full microbial ocean (120) — the longest
-    // and most dominant era in Earth history. GOE: die-off from oxygen toxicity (70).
-    // Eukaryotes → Multicellularity: gradual recovery. Cambrian: explosion to hard cap.
+    // Abiogenesis: sparse (15). Minimal-Replicator Seas: full microbial ocean (120).
+    // Great Gas Event: die-off from oxidizer toxicity (70).
+    // Compartmentalized Cells → Multicellularity: gradual recovery. Morphological Complexity Threshold: explosion to hard cap.
     private static readonly int[]   MaxPopPerEra         = {    15,   120,    70,   120,   200,   350  };
     // Fraction of an agent's computed moveSpeed that's actually used.
     // Primordial microbes are sluggish; locomotion genes unlock speed over time.
@@ -31,11 +31,11 @@ public class EraManager : MonoBehaviour
     private static readonly string[] EraNames          =
     {
         "Abiogenesis",
-        "Prokaryotic Seas",
-        "Great Oxidation Event",
-        "Eukaryotes",
+        "Minimal-Replicator Seas",
+        "Great Gas Event",
+        "Compartmentalized Cells",
         "Multicellularity",
-        "Cambrian Explosion",
+        "Morphological Complexity Threshold",
     };
 
     /// Current Era1 sub-phase index (0–5). −1 while still in the cinematic / pre-Era1.
@@ -123,6 +123,13 @@ public class EraManager : MonoBehaviour
         _flashText = EraNames[era];
         _flashTimer = FlashDuration;
 
+        // Era 1 begins at sub-phase 0 (Abiogenesis) — fire audio/postprocess once.
+        if (era == 0)
+        {
+            EraPostProcessManager.Instance?.OnEra1Begin();
+            AudioManager.Instance?.OnEraShiftToEra1();
+        }
+
         // Rescale all existing agents to match the new era's visual scale.
         if (_spawner == null) return;
         float scale = AgentScalePerEra[era];
@@ -132,20 +139,20 @@ public class EraManager : MonoBehaviour
                 agent.transform.localScale = Vector3.one * scale;
         }
 
-        // Nudge SpeciationManager climate volatility up at the Great Oxidation Event
-        // and Cambrian Explosion — these are high-turnover periods.
+        // Nudge SpeciationManager climate volatility up at the Great Gas Event
+        // and Morphological Complexity Threshold — these are high-turnover periods.
         if (SpeciationManager.Instance != null)
         {
-            if (era == 2) SpeciationManager.Instance.SetClimateVolatility(2.0f); // GOE
-            else if (era == 5) SpeciationManager.Instance.SetClimateVolatility(2.5f); // Cambrian
+            if (era == 2) SpeciationManager.Instance.SetClimateVolatility(2.0f); // Great Gas Event
+            else if (era == 5) SpeciationManager.Instance.SetClimateVolatility(2.5f); // Morphological Complexity Threshold
             else SpeciationManager.Instance.SetClimateVolatility(1.0f);
         }
 
         Debug.Log($"[EraManager] Era transition → {EraNames[era]} (era {era}), agentScale={AgentScalePerEra[era]:F2}, maxPop={MaxPopPerEra[era]}");
 
-        // When Cambrian Explosion begins, open the biology-gate window. Era 2 fires as soon
-        // as the player's lineage resolves all three AND-gate events (KingdomFork +
-        // ProtectiveStructureEmergence + SensoryOrganDevelopment), or after the ceiling.
+        // When Morphological Complexity Threshold begins, open the biology-gate window. Era 2
+        // fires as soon as the player's lineage resolves all three AND-gate events (KingdomFork
+        // + ProtectiveStructureEmergence + SensoryOrganDevelopment), or after the ceiling.
         if (era == 5)
         {
             _cambrianWindowOpen    = true;
@@ -154,7 +161,7 @@ public class EraManager : MonoBehaviour
     }
 
     /// Era 1→2 AND-gate: true when the player's lineage has resolved the three minimum
-    /// events required for the Cambrian Explosion threshold (§77 spec).
+    /// events required for the Morphological Complexity Threshold (§77 spec).
     private bool CheckEra1To2Gate()
     {
         if (_spawner == null) return false;

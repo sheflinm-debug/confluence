@@ -41,6 +41,8 @@ public class MainMenuManager : MonoBehaviour
     private int        _localSlotIdx = -1;
     // Cached string from the last received lobby broadcast (client side).
     private string     _receivedLobbyBroadcast;
+    // Timer for the host's periodic lobby state re-broadcast.
+    private float      _lobbyBroadcastTimer;
 
     // Star field (procedural, drawn once)
     private Vector2[] _stars;
@@ -103,14 +105,71 @@ public class MainMenuManager : MonoBehaviour
             }
         }
 
-        if (_screen == Screen.Multiplayer_GameRoom && !_isMultiplayerCreation)
+        if (_screen == Screen.Multiplayer_GameRoom)
         {
-            // Client: poll LANDiscovery for lobby state updates from host.
-            string latest = LANDiscovery.Instance?.LastLobbyBroadcast;
-            if (latest != null && latest != _receivedLobbyBroadcast)
+            if (_isMultiplayerCreation)
             {
-                _receivedLobbyBroadcast = latest;
-                LobbyBroadcastParser.Apply(latest, _slotTypes, _slotReady);
+                // Host: assign a slot to each newly joined client.
+                if (LANDiscovery.Instance != null)
+                {
+                    bool needBroadcast = false;
+
+                    while (LANDiscovery.Instance.DequeueJoin(out _))
+                    {
+                        for (int i = 1; i < LobbySlots; i++)
+                        {
+                            if (_slotTypes[i] == SlotType.AI)
+                            {
+                                _slotTypes[i] = SlotType.Human;
+                                _slotReady[i] = false;
+                                needBroadcast = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    while (LANDiscovery.Instance.DequeueReadyUpdate(out var ru))
+                    {
+                        if (ru.SlotIdx > 0 && ru.SlotIdx < LobbySlots)
+                        {
+                            _slotReady[ru.SlotIdx] = ru.Ready;
+                            needBroadcast = true;
+                        }
+                    }
+
+                    if (needBroadcast) BroadcastLobbyState();
+                }
+
+                // Periodic lobby broadcast so late-joiners catch up.
+                _lobbyBroadcastTimer += Time.deltaTime;
+                if (_lobbyBroadcastTimer >= 2f)
+                {
+                    _lobbyBroadcastTimer = 0f;
+                    BroadcastLobbyState();
+                }
+            }
+            else
+            {
+                // Client: poll LANDiscovery for lobby state updates from host.
+                string latest = LANDiscovery.Instance?.LastLobbyBroadcast;
+                if (latest != null && latest != _receivedLobbyBroadcast)
+                {
+                    _receivedLobbyBroadcast = latest;
+                    LobbyBroadcastParser.Apply(latest, _slotTypes, _slotReady);
+
+                    // Auto-claim the first unready Human slot that isn't slot 0 (host).
+                    if (_localSlotIdx < 0)
+                    {
+                        for (int i = 1; i < LobbySlots; i++)
+                        {
+                            if (_slotTypes[i] == SlotType.Human && !_slotReady[i])
+                            {
+                                _localSlotIdx = i;
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -138,12 +197,14 @@ public class MainMenuManager : MonoBehaviour
         else
         {
             // Client: wait for host broadcast before showing slots.
-            _localSlotIdx = -1; // will be assigned once a slot is taken
+            _localSlotIdx = -1;
             for (int i = 0; i < LobbySlots; i++)
             {
                 _slotTypes[i] = SlotType.AI;
                 _slotReady[i] = false;
             }
+            // Announce presence so the host assigns us a slot.
+            LANDiscovery.Instance?.SendJoinRequest();
         }
     }
 
@@ -537,7 +598,10 @@ public class MainMenuManager : MonoBehaviour
                 if (GUI.Button(rdyRect, ready ? "Ready ✓" : "Not Ready", BtnStyle(10)))
                 {
                     _slotReady[i] = !_slotReady[i];
-                    BroadcastLobbyState();
+                    if (_isMultiplayerCreation)
+                        BroadcastLobbyState();
+                    else
+                        LANDiscovery.Instance?.SendReadyState(i, _slotReady[i]);
                 }
                 GUI.color = prev;
             }

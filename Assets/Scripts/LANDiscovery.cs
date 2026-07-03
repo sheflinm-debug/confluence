@@ -19,6 +19,8 @@ public class LANDiscovery : MonoBehaviour
     private const string MagicGame     = "EVOSIM_GAME";
     private const string MagicLobby    = "EVOSIM_LOBBY";
     private const string MagicStart    = "EVOSIM_START";
+    private const string MagicJoin     = "EVOSIM_JOIN";
+    private const string MagicReady    = "EVOSIM_READY";
     private const float BroadcastInterval = 2f;
 
     // ── Lobby / start state (updated by incoming broadcasts) ─────────────────
@@ -46,8 +48,11 @@ public class LANDiscovery : MonoBehaviour
     private int          _gamePort = 7777;
     private int          _playerCount = 1;
 
-    // Thread-safe queue for received packets
-    private readonly Queue<string> _incoming = new Queue<string>();
+    // Thread-safe queues for received packets
+    private readonly Queue<string> _incoming   = new Queue<string>();
+    private readonly Queue<string> _joinQueue  = new Queue<string>(); // client IPs that sent EVOSIM_JOIN
+    public struct ReadyUpdate { public int SlotIdx; public bool Ready; }
+    private readonly Queue<ReadyUpdate> _readyQueue = new Queue<ReadyUpdate>();
     private readonly object _lock = new object();
 
     private void Awake()
@@ -109,6 +114,33 @@ public class LANDiscovery : MonoBehaviour
     }
 
     public void UpdatePlayerCount(int count) => _playerCount = count;
+
+    /// Client: announce entry into the game room so the host can assign a slot.
+    public void SendJoinRequest() => SendBroadcast(MagicJoin);
+
+    /// Client: push ready-state change to host.
+    public void SendReadyState(int slotIdx, bool ready)
+        => SendBroadcast($"{MagicReady}:{slotIdx}:{(ready ? 1 : 0)}");
+
+    /// Host: dequeue one pending join IP; returns false when queue is empty.
+    public bool DequeueJoin(out string clientIP)
+    {
+        lock (_lock)
+        {
+            if (_joinQueue.Count > 0) { clientIP = _joinQueue.Dequeue(); return true; }
+            clientIP = null; return false;
+        }
+    }
+
+    /// Host: dequeue one pending ready-state update; returns false when queue is empty.
+    public bool DequeueReadyUpdate(out ReadyUpdate update)
+    {
+        lock (_lock)
+        {
+            if (_readyQueue.Count > 0) { update = _readyQueue.Dequeue(); return true; }
+            update = default; return false;
+        }
+    }
 
     /// Host: sends current lobby slot config + ready flags + world seed to all clients.
     public void BroadcastLobbyState(MainMenuManager.SlotType[] slots, bool[] ready, int seed)
@@ -242,8 +274,24 @@ public class LANDiscovery : MonoBehaviour
 
         if (msg.StartsWith(MagicDiscover))
         {
-            // Client is scanning — reply unicast so they find us even if broadcast is blocked.
             if (_isHost) SendUnicast(ip, $"{MagicGame}:{SystemInfo.deviceName}:{_gamePort}:{_playerCount}");
+            return;
+        }
+        if (msg.StartsWith(MagicJoin))
+        {
+            if (_isHost) lock (_lock) _joinQueue.Enqueue(ip);
+            return;
+        }
+        if (msg.StartsWith(MagicReady + ":"))
+        {
+            if (_isHost)
+            {
+                string[] parts = msg.Split(':');
+                if (parts.Length >= 3 &&
+                    int.TryParse(parts[1], out int idx) &&
+                    int.TryParse(parts[2], out int r))
+                    lock (_lock) _readyQueue.Enqueue(new ReadyUpdate { SlotIdx = idx, Ready = r == 1 });
+            }
             return;
         }
         if (msg.StartsWith(MagicGame + ":"))

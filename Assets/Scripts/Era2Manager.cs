@@ -178,6 +178,9 @@ public class Era2Manager : MonoBehaviour
             }
         }
 
+        EraPostProcessManager.Instance?.OnEra2Begin();
+        AudioManager.Instance?.OnEraShiftToEra2();
+
         Debug.Log("[Era2Manager] Era 2 — Age of Intelligence — BEGINS.");
     }
 
@@ -244,8 +247,7 @@ public class Era2Manager : MonoBehaviour
         {
             _era3GateFired = true;
             Debug.Log($"[Era2Manager] Era 2→3 gate fired (ceiling={ceiling}, elapsed={_era2Elapsed:F0}s)");
-            // Era3Manager hook — stubbed until Era 3 is implemented.
-            // Era3Manager.Instance?.BeginEra3();
+            Era3Manager.Instance?.BeginEra3();
         }
     }
 
@@ -401,6 +403,10 @@ public class Era2Manager : MonoBehaviour
 
             Debug.Log($"[Era2] Community {rec.communityId} end-of-era: II={rec.II:F1}, {flags}/5 thresholds crossed. "
                     + $"Arch={rec.Architecture}, Sub={rec.SubTrack}");
+
+            // Player civ crossing end-of-era is the biggest narrative beat — distinct stinger.
+            if (rec.communityId == 0 && rec.HasCrossedEndOfEra2Threshold)
+                AudioManager.Instance?.OnEndOfEra2Threshold();
         }
     }
 

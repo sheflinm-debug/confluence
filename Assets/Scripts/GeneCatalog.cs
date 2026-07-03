@@ -218,7 +218,7 @@ public static class GeneCatalog
         });
 
         // Manipulation appendage development: evolve increasingly dexterous structures.
-        // Gated behind motility (you need to move to develop limbs) and Prokaryotic Seas+.
+        // Gated behind motility (you need to move to develop limbs) and Minimal-Replicator Seas+.
         GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "ManipulationAppendageDevelopment",
@@ -253,7 +253,7 @@ public static class GeneCatalog
             Prerequisites = new[] { "ManipulationAppendageDevelopment" },
             IsEra1Event = true,
             IsEligible = agent => agent.Manipulation == ManipulationLevel.Simple
-                && (EraManager.Instance == null || EraManager.Instance.CurrentEra >= 3) // Eukaryotes+
+                && (EraManager.Instance == null || EraManager.Instance.CurrentEra >= 3) // Compartmentalized Cells+
                 && (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 4 || agent.StressLevel >= 45f)
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             Choices = new[]
@@ -533,7 +533,7 @@ public static class GeneCatalog
             }
         });
 
-        // e1_diversification_explosion: Cambrian closure AND-gate.
+        // e1_diversification_explosion: Morphological Complexity Threshold closure AND-gate.
         // Fires automatically once predation + sensory + protective structure thresholds are all met.
         GeneEvolutionManager.Register(new GeneDefinition
         {
@@ -546,11 +546,11 @@ public static class GeneCatalog
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             AutoApply = agent =>
             {
-                // General diversification fitness bonus — Cambrian body-plan optimisation.
+                // General diversification fitness bonus — morphological complexity optimisation.
                 agent.SetTraits(agent.visionTrait + 3f, agent.speedTrait + 3f,
                     agent.strengthTrait + 3f, agent.hardinessTrait + 3f,
                     agent.temperaturePreference, agent.moisturePreference);
-                Debug.Log($"[Era1] {agent.name} crossed the Cambrian Diversification threshold.");
+                Debug.Log($"[Era1] {agent.name} crossed the Morphological Complexity Threshold.");
             }
         });
 
@@ -952,6 +952,217 @@ public static class GeneCatalog
             // background agents that auto-apply must have a viable energy source.
             // The player still gets the choice popup first.
             DefaultAutoApply = agent => agent.BecomeProducer()
+        });
+
+        // ── Era 3 Decision Nodes (d3_*) ──────────────────────────────────────────
+        // These use the GeneDefinition system but their Apply lambdas modify
+        // CivilizationState via Era3Manager, not agent gene stats.
+        // IsEligible: player agent only (communityId == 0), Era 3 active, prereq acquired.
+
+        catalog.Add(new GeneDefinition
+        {
+            Id = "d3_trade_policy",
+            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
+                && agent.communityId == 0
+                && Era3Manager.Instance.PlayerCiv.Has("e3_exchange_contact")
+                && !Era3Manager.Instance.PlayerCiv.Has("d3_trade_policy"),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Open Routes — low tariffs, max exchange",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_trade_policy"); Era3Manager.Instance?.SetTradePolicy(0, 0.05f, 0.9f); Era3Manager.Instance?.OnDecisionResolved("d3_trade_policy"); } },
+                new GeneChoice { Label = "Balanced Tariffs — moderate protection",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_trade_policy"); Era3Manager.Instance?.SetTradePolicy(0, 0.35f, 0.6f); Era3Manager.Instance?.OnDecisionResolved("d3_trade_policy"); } },
+                new GeneChoice { Label = "Embargo — economic isolation",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_trade_policy"); Era3Manager.Instance?.SetTradePolicy(0, 0.95f, 0.15f); Era3Manager.Instance?.OnDecisionResolved("d3_trade_policy"); } },
+            }
+        });
+
+        catalog.Add(new GeneDefinition
+        {
+            Id = "d3_kinship_policy",
+            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
+                && agent.communityId == 0
+                && Era3Manager.Instance.PlayerCiv.Has("e3_family_norms_emerge")
+                && !Era3Manager.Instance.PlayerCiv.Has("d3_kinship_policy"),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Nuclear — tight household unit",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_kinship_policy"); Era3Manager.Instance?.SetKinship(0, KinshipPolicy.Nuclear); Era3Manager.Instance?.OnDecisionResolved("d3_kinship_policy"); } },
+                new GeneChoice { Label = "Extended — broader kin networks",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_kinship_policy"); Era3Manager.Instance?.SetKinship(0, KinshipPolicy.Extended); Era3Manager.Instance?.OnDecisionResolved("d3_kinship_policy"); } },
+                new GeneChoice { Label = "Clan — kin coalitions, factionalism risk",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_kinship_policy"); Era3Manager.Instance?.SetKinship(0, KinshipPolicy.Clan); Era3Manager.Instance?.OnDecisionResolved("d3_kinship_policy"); } },
+                new GeneChoice { Label = "CrossLineage — intermarriage, trade openness",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_kinship_policy"); Era3Manager.Instance?.SetKinship(0, KinshipPolicy.CrossLineage); Era3Manager.Instance?.OnDecisionResolved("d3_kinship_policy"); } },
+            }
+        });
+
+        catalog.Add(new GeneDefinition
+        {
+            Id = "d3_government_transition",
+            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
+                && agent.communityId == 0
+                && Era3Manager.Instance.PlayerCiv.Has("e3_social_stratification")
+                && !Era3Manager.Instance.PlayerCiv.Has("d3_government_transition"),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Monarchy / Hub Network / Single Queen",
+                    Apply = agent => {
+                        agent.AcquiredGenes.Add("d3_government_transition");
+                        var arch = Era3Manager.Instance!.PlayerCiv.Architecture;
+                        var gov  = arch == CognitiveArchitecture.Distributed ? GovernmentType.HubNetwork
+                                 : arch == CognitiveArchitecture.Collective  ? GovernmentType.SingleQueen
+                                 :                                              GovernmentType.Monarchy;
+                        Era3Manager.Instance.SetGovernment(0, gov);
+                        Era3Manager.Instance.OnDecisionResolved("d3_government_transition"); } },
+                new GeneChoice { Label = "Oligarchy / Mesh Network / Nest Cluster",
+                    Apply = agent => {
+                        agent.AcquiredGenes.Add("d3_government_transition");
+                        var arch = Era3Manager.Instance!.PlayerCiv.Architecture;
+                        var gov  = arch == CognitiveArchitecture.Distributed ? GovernmentType.MeshNetwork
+                                 : arch == CognitiveArchitecture.Collective  ? GovernmentType.NestCluster
+                                 :                                              GovernmentType.Oligarchy;
+                        Era3Manager.Instance.SetGovernment(0, gov);
+                        Era3Manager.Instance.OnDecisionResolved("d3_government_transition"); } },
+                new GeneChoice { Label = "Democracy — broad participation",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_government_transition"); Era3Manager.Instance?.SetGovernment(0, GovernmentType.Democracy); Era3Manager.Instance?.OnDecisionResolved("d3_government_transition"); } },
+                new GeneChoice { Label = "Theocracy — sacred authority",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_government_transition"); Era3Manager.Instance?.SetGovernment(0, GovernmentType.Theocracy); Era3Manager.Instance?.OnDecisionResolved("d3_government_transition"); } },
+            }
+        });
+
+        catalog.Add(new GeneDefinition
+        {
+            Id = "d3_idea_patronage",
+            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
+                && agent.communityId == 0
+                && Era3Manager.Instance.PlayerCiv.Has("e3_chiefdom")
+                && !Era3Manager.Instance.PlayerCiv.Has("d3_idea_patronage"),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Culture — art, oral tradition, norms",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_idea_patronage"); Era3Manager.Instance?.SetIdeaPatronage(0, IdeaPatronageType.Culture); Era3Manager.Instance?.OnDecisionResolved("d3_idea_patronage"); } },
+                new GeneChoice { Label = "Religion — cosmological tier",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_idea_patronage"); Era3Manager.Instance?.SetIdeaPatronage(0, IdeaPatronageType.Religion); Era3Manager.Instance?.OnDecisionResolved("d3_idea_patronage"); } },
+                new GeneChoice { Label = "Science — proto-natural philosophy",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_idea_patronage"); Era3Manager.Instance?.SetIdeaPatronage(0, IdeaPatronageType.Science); Era3Manager.Instance?.OnDecisionResolved("d3_idea_patronage"); } },
+                new GeneChoice { Label = "Military — tactical doctrine",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_idea_patronage"); Era3Manager.Instance?.SetIdeaPatronage(0, IdeaPatronageType.Military); Era3Manager.Instance?.OnDecisionResolved("d3_idea_patronage"); } },
+            }
+        });
+
+        catalog.Add(new GeneDefinition
+        {
+            Id = "d3_war_or_diplomacy",
+            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
+                && agent.communityId == 0
+                && Era3Manager.Instance.PlayerCiv.Has("e3_state_formation")
+                && !Era3Manager.Instance.PlayerCiv.Has("d3_war_or_diplomacy"),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Organized Warfare — invest in coercive capacity",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_war_or_diplomacy"); Era3Manager.Instance?.SetWarPath(0); Era3Manager.Instance?.OnDecisionResolved("d3_war_or_diplomacy"); } },
+                new GeneChoice { Label = "Diplomacy — formal alliances, open borders",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_war_or_diplomacy"); Era3Manager.Instance?.SetDiplomacyPath(0); Era3Manager.Instance?.OnDecisionResolved("d3_war_or_diplomacy"); } },
+            }
+        });
+
+        catalog.Add(new GeneDefinition
+        {
+            Id = "d3_domain_investment",
+            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
+                && agent.communityId == 0
+                && Era3Manager.Instance.PlayerCiv.Has("e3_warfare_organized")
+                && !Era3Manager.Instance.PlayerCiv.Has("d3_domain_investment"),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Kinetic — conventional force",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_domain_investment"); Era3Manager.Instance?.ApplyDomainInvestment(0, 0.25f, 0f, 0f, 0f); Era3Manager.Instance?.OnDecisionResolved("d3_domain_investment"); } },
+                new GeneChoice { Label = "Biochemical — plague & toxin doctrine",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_domain_investment"); Era3Manager.Instance?.ApplyDomainInvestment(0, 0f, 0.25f, 0f, 0f); Era3Manager.Instance?.OnDecisionResolved("d3_domain_investment"); } },
+                new GeneChoice { Label = "Informational — espionage & disinformation",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_domain_investment"); Era3Manager.Instance?.ApplyDomainInvestment(0, 0f, 0f, 0.25f, 0f); Era3Manager.Instance?.OnDecisionResolved("d3_domain_investment"); } },
+                new GeneChoice { Label = "Economic — sanctions & trade leverage",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_domain_investment"); Era3Manager.Instance?.ApplyDomainInvestment(0, 0f, 0f, 0f, 0.25f); Era3Manager.Instance?.OnDecisionResolved("d3_domain_investment"); } },
+            }
+        });
+
+        catalog.Add(new GeneDefinition
+        {
+            Id = "d3_bioweapon_option",
+            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
+                && agent.communityId == 0
+                && Era3Manager.Instance.PlayerCiv.Has("d3_domain_investment")
+                && Era3Manager.Instance.PlayerCiv.Has("e3_warfare_organized")
+                && !Era3Manager.Instance.PlayerCiv.Has("d3_bioweapon_option"),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Develop Biochemical Weapons — high domain gain, risk",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_bioweapon_option"); Era3Manager.Instance?.ApplyDomainInvestment(0, 0f, 0.30f, 0f, 0f); Era3Manager.Instance?.OnDecisionResolved("d3_bioweapon_option"); } },
+                new GeneChoice { Label = "Restrict to Defense — no offensive capacity",
+                    Apply = agent => { agent.AcquiredGenes.Add("d3_bioweapon_option"); Era3Manager.Instance?.OnDecisionResolved("d3_bioweapon_option"); } },
+            }
+        });
+
+        catalog.Add(new GeneDefinition
+        {
+            Id = "d3_caste_labor",
+            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
+                && agent.communityId == 0
+                && Era3Manager.Instance.PlayerCiv.Has("e3_social_stratification")
+                && !Era3Manager.Instance.PlayerCiv.Has("d3_caste_labor"),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Production Focus — maximize output",
+                    Apply = agent => {
+                        agent.AcquiredGenes.Add("d3_caste_labor");
+                        var arch = Era3Manager.Instance!.PlayerCiv.Architecture;
+                        if (arch == CognitiveArchitecture.Collective) Era3Manager.Instance.SetCasteAllocation(0, 0.7f, 0.2f, 0.1f);
+                        else Era3Manager.Instance.SetSectorAllocation(0, 0.65f, 0.2f, 0.15f);
+                        Era3Manager.Instance.OnDecisionResolved("d3_caste_labor"); } },
+                new GeneChoice { Label = "Military Focus — coercive expansion",
+                    Apply = agent => {
+                        agent.AcquiredGenes.Add("d3_caste_labor");
+                        var arch = Era3Manager.Instance!.PlayerCiv.Architecture;
+                        if (arch == CognitiveArchitecture.Collective) Era3Manager.Instance.SetCasteAllocation(0, 0.3f, 0.2f, 0.5f);
+                        else Era3Manager.Instance.SetSectorAllocation(0, 0.3f, 0.55f, 0.15f);
+                        Era3Manager.Instance.OnDecisionResolved("d3_caste_labor"); } },
+                new GeneChoice { Label = "Culture Focus — ideas and legitimacy",
+                    Apply = agent => {
+                        agent.AcquiredGenes.Add("d3_caste_labor");
+                        var arch = Era3Manager.Instance!.PlayerCiv.Architecture;
+                        if (arch == CognitiveArchitecture.Collective) Era3Manager.Instance.SetCasteAllocation(0, 0.4f, 0.4f, 0.2f);
+                        else Era3Manager.Instance.SetSectorAllocation(0, 0.3f, 0.2f, 0.5f);
+                        Era3Manager.Instance.OnDecisionResolved("d3_caste_labor"); } },
+            }
+        });
+
+        catalog.Add(new GeneDefinition
+        {
+            Id = "d3_large_initiative_1",
+            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
+                && agent.communityId == 0
+                && Era3Manager.Instance.PlayerCiv.Has("e3_surplus_economy")
+                && !Era3Manager.Instance.PlayerCiv.Has("d3_large_initiative_1"),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Vaccination Drive — drain disease crises",
+                    Apply = agent => {
+                        agent.AcquiredGenes.Add("d3_large_initiative_1");
+                        Era3Manager.Instance?.PlayerCiv.RecoverResilience(0.10f);
+                        Era3Manager.Instance?.OnDecisionResolved("d3_large_initiative_1"); } },
+                new GeneChoice { Label = "Trade Expansion — open new partner routes",
+                    Apply = agent => {
+                        agent.AcquiredGenes.Add("d3_large_initiative_1");
+                        Era3Manager.Instance?.SetTradePolicy(0, 0.10f, 0.80f);
+                        Era3Manager.Instance?.OnDecisionResolved("d3_large_initiative_1"); } },
+                new GeneChoice { Label = "Monument — culture + legitimacy boost",
+                    Apply = agent => {
+                        agent.AcquiredGenes.Add("d3_large_initiative_1");
+                        var civ = Era3Manager.Instance?.PlayerCiv;
+                        if (civ != null) civ.InvestReligion = Mathf.Min(civ.InvestReligion + 0.15f, 1f);
+                        Era3Manager.Instance?.OnDecisionResolved("d3_large_initiative_1"); } },
+            }
         });
     }
 }

@@ -43,11 +43,11 @@ public class SpeciationManager : MonoBehaviour
     public float minSecondsBetweenSplits = 60f;
 
     // Cap on the effective kyr-per-frame used in the SI roll so extreme geological
-    // time-compression (Prokaryotic seas ≈ 8000 kyr/sec) doesn't make speciation
+    // time-compression (Minimal-Replicator Seas ≈ 8000 kyr/sec) doesn't make speciation
     // a near-certainty every cooldown expiry. 0.5 kyr per frame ≈ 30 fps effective rate.
     [Tooltip("Maximum simulated kiloyears per frame counted toward the speciation roll. " +
              "Prevents time-compression from overwhelming the SI probability. " +
-             "50 kyr/frame gives ~1 event per lineage per minute at Prokaryotic baseRate.")]
+             "50 kyr/frame gives ~1 event per lineage per minute at Minimal-Replicator baseRate.")]
     public float maxDtKyrPerRoll = 50f;
 
     // Tracks the last real time (Time.time) each lineage split, for cooldown enforcement.
@@ -232,6 +232,7 @@ public class SpeciationManager : MonoBehaviour
             pos, newCommunityId, newColor);
         child.InheritGenesFrom(parent);
         child.TriggerSpeciation(newLineageName, newColor);
+        AudioManager.Instance?.OnSpeciation();
 
         Debug.Log($"[SpeciationManager] '{parent.AtmoLineage}' branched → '{newLineageName}' (community {newCommunityId}) | SI={_maxSIThisFrame:G4} era={_eraLabel} species={_speciesCount + 1}");
     }
@@ -246,11 +247,11 @@ public class SpeciationManager : MonoBehaviour
     }
 
     /// Kiloyears of sim-time per real second for the currently-active EraTimeline phase.
-    /// Falls back to "Prokaryotic seas" compression when the clock is past its last phase
+    /// Falls back to Minimal-Replicator Seas compression when the clock is past its last phase
     /// or on a pre-Era-1 phase.
     private float GetCompressionKyrPerSecond()
     {
-        // Fallback: "Prokaryotic seas" is Era1StartIndex + 1 (index 9).
+        // Fallback: Minimal-Replicator Seas is Era1StartIndex + 1 (index 9).
         EraPhase fallbackPhase = EraTimeline.Phases[EraTimeline.Era1StartIndex + 1];
         float fallback = CompressionOf(fallbackPhase);
 
@@ -275,8 +276,8 @@ public class SpeciationManager : MonoBehaviour
         int idx = DeepTimeClock.Instance.CurrentPhaseIndex;
         if (idx >= EraTimeline.Phases.Length) return 0.00001f;
         string label = EraTimeline.Phases[idx].PhaseLabel;
-        if (label.Contains("Cambrian") || label.Contains("Multicellularity")) return 0.0005f;
-        if (label.Contains("Eukaryote")) return 0.00005f;
+        if (label.Contains("Morphological Complexity") || label.Contains("Multicellularity")) return 0.0005f;
+        if (label.Contains("Compartmentalized")) return 0.00005f;
         return 0.00001f;
     }
 

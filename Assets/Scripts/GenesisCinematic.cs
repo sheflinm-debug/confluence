@@ -149,7 +149,7 @@ public class GenesisCinematic : MonoBehaviour
         // (not the logical collider root) so it rotates WITH the terrain it's pooled
         // into - not a recoloring of the terrain itself, so it actually reads as fluid
         // rather than "more terrain." Built now but only revealed during Condensation &
-        // water arrival.
+        // solvent arrival.
         _liquidShellData = liquid != null ? PlanetTileMesh.BuildLiquidShellData(tectonics, planetRadius, elevationWorldScale, seaLevel, liquid, liquidTempK) : default;
         _hasLiquid = liquid != null && _liquidShellData.Vertices != null && _liquidShellData.Vertices.Length > 0;
         if (_hasLiquid)
@@ -164,7 +164,7 @@ public class GenesisCinematic : MonoBehaviour
             liquidFilter.mesh = _liquidMesh;
             MeshRenderer liquidRenderer = _liquidGo.AddComponent<MeshRenderer>();
             liquidRenderer.material = new Material(Shader.Find("Custom/VertexColorTransparentURP"));
-            _liquidGo.SetActive(false); // revealed during Condensation & water arrival
+            _liquidGo.SetActive(false); // revealed during Condensation & solvent arrival
         }
 
         StartCoroutine(RunSequence(center, planetRadius, solarSystem, parent));
@@ -609,7 +609,7 @@ public class GenesisCinematic : MonoBehaviour
 
     /// Lerps the planet mesh between two precomputed snapshots over one EraTimeline
     /// phase's duration - used for "Crust formation & cooling" (molten -> terrain) and
-    /// "Condensation & water arrival" (terrain -> flooded).
+    /// "Condensation & solvent arrival" (terrain -> flooded).
     private IEnumerator LerpPhase(int phaseIndex, PlanetTileMesh.MeshData from, PlanetTileMesh.MeshData to, Vector3 center)
     {
         float duration = EraTimeline.Phases[phaseIndex].DurationSeconds;
