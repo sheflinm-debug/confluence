@@ -959,7 +959,7 @@ public static class GeneCatalog
         // CivilizationState via Era3Manager, not agent gene stats.
         // IsEligible: player agent only (communityId == 0), Era 3 active, prereq acquired.
 
-        catalog.Add(new GeneDefinition
+        GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "d3_trade_policy",
             IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
@@ -977,7 +977,7 @@ public static class GeneCatalog
             }
         });
 
-        catalog.Add(new GeneDefinition
+        GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "d3_kinship_policy",
             IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
@@ -997,7 +997,7 @@ public static class GeneCatalog
             }
         });
 
-        catalog.Add(new GeneDefinition
+        GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "d3_government_transition",
             IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
@@ -1031,7 +1031,7 @@ public static class GeneCatalog
             }
         });
 
-        catalog.Add(new GeneDefinition
+        GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "d3_idea_patronage",
             IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
@@ -1051,7 +1051,7 @@ public static class GeneCatalog
             }
         });
 
-        catalog.Add(new GeneDefinition
+        GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "d3_war_or_diplomacy",
             IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
@@ -1067,7 +1067,7 @@ public static class GeneCatalog
             }
         });
 
-        catalog.Add(new GeneDefinition
+        GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "d3_domain_investment",
             IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
@@ -1087,7 +1087,7 @@ public static class GeneCatalog
             }
         });
 
-        catalog.Add(new GeneDefinition
+        GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "d3_bioweapon_option",
             IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
@@ -1104,7 +1104,7 @@ public static class GeneCatalog
             }
         });
 
-        catalog.Add(new GeneDefinition
+        GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "d3_caste_labor",
             IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
@@ -1137,7 +1137,7 @@ public static class GeneCatalog
             }
         });
 
-        catalog.Add(new GeneDefinition
+        GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "d3_large_initiative_1",
             IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive

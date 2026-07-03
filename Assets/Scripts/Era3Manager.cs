@@ -147,8 +147,7 @@ public class Era3Manager : MonoBehaviour
             CasteDiff = playerArch == CognitiveArchitecture.Collective
                 && (era2Rec?.ThresholdLaborFormalized ?? false)
                 ? CasteDifferentiation.Polymorphic : CasteDifferentiation.BasicSplit,
-            RepMode = CasteDifferentiation.Monomorphic == CasteDifferentiation.Monomorphic
-                ? ReproductiveMode.Polygyne : ReproductiveMode.Monogyne,  // default polygyne
+            RepMode = ReproductiveMode.Polygyne,
         };
         PlayerCiv.InitNativeDomains();
 
@@ -381,8 +380,8 @@ public class Era3Manager : MonoBehaviour
                     1 /* Bio */         => civ.Subtrack == IndividuatedSubTrack.A1_SocialForaging       ? 1.2f : 1.0f,
                     2 /* Info */        => civ.CommMedium switch
                     {
-                        CommunicationMedium.Chemical    => 0.8f,
-                        CommunicationMedium.Bioelectric => 1.1f,
+                        CommunicationMedium.ChemicalPheromonal       => 0.8f,
+                        CommunicationMedium.BioluminescentElectrical => 1.1f,
                         _                               => 1.0f,
                     },
                     3 /* Existential */ => civ.BeliefTier >= 3 ? 1.0f : 0.0f,  // Tier 3 hard gate §1.2

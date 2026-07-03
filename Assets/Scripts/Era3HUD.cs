@@ -282,8 +282,8 @@ public class Era3HUD : MonoBehaviour
                 {
                     CommunicationMedium.VocalAuditory  => "Vocal — oral tradition cards unlocked",
                     CommunicationMedium.VisualGestural => "Visual — proto-writing / art cards unlocked",
-                    CommunicationMedium.Chemical       => "Chemical — inherits Distributed info cards",
-                    CommunicationMedium.Bioelectric    => "Bioelectric — specialist cards only",
+                    CommunicationMedium.ChemicalPheromonal       => "Chemical — inherits Distributed info cards",
+                    CommunicationMedium.BioluminescentElectrical => "Bioelectric — specialist cards only",
                     _                                  => "Unset — complete Era 2 comm gene first",
                 };
                 Readout("Comm medium", medStr, w, ref y);

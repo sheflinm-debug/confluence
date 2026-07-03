@@ -91,16 +91,16 @@ public class EraPostProcessManager : MonoBehaviour
     {
         var p = ScriptableObject.CreateInstance<VolumeProfile>();
 
-        var ca = p.Add<ColorAdjustments>(overrideState: true);
+        var ca = p.Add<ColorAdjustments>(true);
         ca.postExposure.Override(0.2f);
         ca.contrast.Override(30f);
         ca.saturation.Override(-60f);
 
-        var vig = p.Add<Vignette>(overrideState: true);
+        var vig = p.Add<Vignette>(true);
         vig.intensity.Override(0.50f);
         vig.smoothness.Override(0.6f);
 
-        var chrom = p.Add<ChromaticAberration>(overrideState: true);
+        var chrom = p.Add<ChromaticAberration>(true);
         chrom.intensity.Override(0.15f);
 
         return p;
@@ -111,16 +111,16 @@ public class EraPostProcessManager : MonoBehaviour
     {
         var p = ScriptableObject.CreateInstance<VolumeProfile>();
 
-        var ca = p.Add<ColorAdjustments>(overrideState: true);
+        var ca = p.Add<ColorAdjustments>(true);
         ca.postExposure.Override(-0.2f);
         ca.saturation.Override(-30f);
         ca.colorFilter.Override(new Color(0.75f, 0.88f, 1.00f)); // cool blue tint
 
-        var vig = p.Add<Vignette>(overrideState: true);
+        var vig = p.Add<Vignette>(true);
         vig.intensity.Override(0.40f);
         vig.smoothness.Override(0.5f);
 
-        var chrom = p.Add<ChromaticAberration>(overrideState: true);
+        var chrom = p.Add<ChromaticAberration>(true);
         chrom.intensity.Override(0.10f);
 
         // No bloom — primordial world has no bioluminescent or canopy highlights.
@@ -133,15 +133,15 @@ public class EraPostProcessManager : MonoBehaviour
     {
         var p = ScriptableObject.CreateInstance<VolumeProfile>();
 
-        var ca = p.Add<ColorAdjustments>(overrideState: true);
+        var ca = p.Add<ColorAdjustments>(true);
         ca.postExposure.Override(0.0f);
         ca.saturation.Override(0f);   // neutral — diversity of pigments reads naturally
 
-        var vig = p.Add<Vignette>(overrideState: true);
+        var vig = p.Add<Vignette>(true);
         vig.intensity.Override(0.20f);
         vig.smoothness.Override(0.4f);
 
-        var bloom = p.Add<Bloom>(overrideState: true);
+        var bloom = p.Add<Bloom>(true);
         bloom.threshold.Override(0.9f);
         bloom.intensity.Override(0.5f);
         bloom.scatter.Override(0.7f);
@@ -154,16 +154,16 @@ public class EraPostProcessManager : MonoBehaviour
     {
         var p = ScriptableObject.CreateInstance<VolumeProfile>();
 
-        var ca = p.Add<ColorAdjustments>(overrideState: true);
+        var ca = p.Add<ColorAdjustments>(true);
         ca.postExposure.Override(0.3f);
         ca.contrast.Override(10f);
         ca.saturation.Override(20f);
 
-        var vig = p.Add<Vignette>(overrideState: true);
+        var vig = p.Add<Vignette>(true);
         vig.intensity.Override(0.10f);
         vig.smoothness.Override(0.3f);
 
-        var bloom = p.Add<Bloom>(overrideState: true);
+        var bloom = p.Add<Bloom>(true);
         bloom.threshold.Override(0.7f);
         bloom.intensity.Override(1.0f);
         bloom.scatter.Override(0.75f);
