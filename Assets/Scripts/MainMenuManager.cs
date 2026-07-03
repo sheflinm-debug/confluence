@@ -486,7 +486,8 @@ public class MainMenuManager : MonoBehaviour
                 NetworkGameManager.Instance?.JoinGame(game.hostIP, game.port);
                 // Seed will be received from host via lobby broadcast.
                 _config.worldSeed = Random.Range(0, int.MaxValue);
-                LANDiscovery.Instance?.Stop(); // stop scan mode; host broadcast will reach us
+                // Keep the UDP listener alive — the client needs it to receive
+                // EVOSIM_LOBBY broadcasts from the host throughout the game room.
                 EnterGameRoom(asHost: false);
             }
             ry += rowH + 6f;
