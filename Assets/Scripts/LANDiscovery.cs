@@ -17,7 +17,14 @@ public class LANDiscovery : MonoBehaviour
     private const int DiscoveryPort = 47777;
     private const string MagicDiscover = "EVOSIM_DISCOVER";
     private const string MagicGame     = "EVOSIM_GAME";
+    private const string MagicLobby    = "EVOSIM_LOBBY";
+    private const string MagicStart    = "EVOSIM_START";
     private const float BroadcastInterval = 2f;
+
+    // ── Lobby / start state (updated by incoming broadcasts) ─────────────────
+    public string LastLobbyBroadcast { get; private set; }
+    public int    LastSeed           { get; private set; }
+    public bool   GameStartSignaled  { get; private set; }
 
     [System.Serializable]
     public struct GameEntry
@@ -99,6 +106,39 @@ public class LANDiscovery : MonoBehaviour
 
     public void UpdatePlayerCount(int count) => _playerCount = count;
 
+    /// Host: sends current lobby slot config + ready flags + world seed to all clients.
+    public void BroadcastLobbyState(MainMenuManager.SlotType[] slots, bool[] ready, int seed)
+    {
+        if (_udp == null || !_isHost) return;
+        // Format: EVOSIM_LOBBY:seed:slot0type,slot1type,...:slot0ready,slot1ready,...
+        var types = string.Join(",", System.Array.ConvertAll(slots, s => (int)s));
+        var rdy   = string.Join(",", System.Array.ConvertAll(ready, r => r ? "1" : "0"));
+        string msg = $"{MagicLobby}:{seed}:{types}:{rdy}";
+        SendBroadcast(msg);
+    }
+
+    /// Host: signals all clients to start the game with the given world seed.
+    public void BroadcastGameStart(int seed)
+    {
+        if (_udp == null) return;
+        string msg = $"{MagicStart}:{seed}";
+        SendBroadcast(msg);
+    }
+
+    private void SendBroadcast(string msg)
+    {
+        try
+        {
+            byte[] data = Encoding.UTF8.GetBytes(msg);
+            var ep = new IPEndPoint(IPAddress.Broadcast, DiscoveryPort);
+            _udp.Send(data, data.Length, ep);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[LANDiscovery] Send failed: {e.Message}");
+        }
+    }
+
     // ── Unity update ───────────────────────────────────────────────────────────
 
     private void Update()
@@ -133,18 +173,8 @@ public class LANDiscovery : MonoBehaviour
 
     private void BroadcastGamePresence()
     {
-        try
-        {
-            string hostName = SystemInfo.deviceName;
-            string msg = $"{MagicGame}:{hostName}:{_gamePort}:{_playerCount}";
-            byte[] data = Encoding.UTF8.GetBytes(msg);
-            var ep = new IPEndPoint(IPAddress.Broadcast, DiscoveryPort);
-            _udp.Send(data, data.Length, ep);
-        }
-        catch (Exception e)
-        {
-            Debug.LogWarning($"[LANDiscovery] Broadcast failed: {e.Message}");
-        }
+        string hostName = SystemInfo.deviceName;
+        SendBroadcast($"{MagicGame}:{hostName}:{_gamePort}:{_playerCount}");
     }
 
     private void SendDiscoverPing()
@@ -188,19 +218,40 @@ public class LANDiscovery : MonoBehaviour
 
     private void HandlePacket(string raw)
     {
-        // Format: "ip|EVOSIM_GAME:hostName:port:playerCount"
+        // Format: "ip|<MAGIC>:..."
         int sep = raw.IndexOf('|');
         if (sep < 0) return;
         string ip  = raw[..sep];
         string msg = raw[(sep + 1)..];
 
-        if (!msg.StartsWith(MagicGame + ":")) return;
+        if (msg.StartsWith(MagicGame + ":"))
+        {
+            HandleGamePresence(ip, msg);
+        }
+        else if (msg.StartsWith(MagicLobby + ":"))
+        {
+            // EVOSIM_LOBBY:seed:types:ready
+            LastLobbyBroadcast = msg;
+            string[] parts = msg.Split(':');
+            if (parts.Length >= 2 && int.TryParse(parts[1], out int seed))
+                LastSeed = seed;
+        }
+        else if (msg.StartsWith(MagicStart + ":"))
+        {
+            string[] parts = msg.Split(':');
+            if (parts.Length >= 2 && int.TryParse(parts[1], out int seed))
+                LastSeed = seed;
+            GameStartSignaled = true;
+        }
+    }
+
+    private void HandleGamePresence(string ip, string msg)
+    {
         string[] parts = msg.Split(':');
         if (parts.Length < 4) return;
         if (!int.TryParse(parts[2], out int port))    return;
         if (!int.TryParse(parts[3], out int players)) return;
 
-        // Update or add entry
         string hostName = parts[1];
         for (int i = 0; i < DiscoveredGames.Count; i++)
         {

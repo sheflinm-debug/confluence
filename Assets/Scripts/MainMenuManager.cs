@@ -14,6 +14,7 @@ public class MainMenuManager : MonoBehaviour
         Multiplayer_Lobby,
         Multiplayer_Creation,
         Multiplayer_Join,
+        Multiplayer_GameRoom,
     }
 
     private Screen _screen = Screen.Main;
@@ -26,6 +27,20 @@ public class MainMenuManager : MonoBehaviour
     private float _scanTimer;
     private bool  _scanning;
     private Vector2 _lanScroll;
+
+    // ── Multiplayer game-room / lobby state ───────────────────────────────────
+    public enum SlotType { Human, AI }
+
+    private const int LobbySlots = 8;
+
+    // Slot configuration (host authoritative; clients receive via broadcast).
+    private SlotType[] _slotTypes   = new SlotType[LobbySlots];
+    // Whether each slot has a ready player (index 0 = local human on host, etc.).
+    private bool[]     _slotReady   = new bool[LobbySlots];
+    // Index of the local player's slot (−1 = unassigned / spectator).
+    private int        _localSlotIdx = -1;
+    // Cached string from the last received lobby broadcast (client side).
+    private string     _receivedLobbyBroadcast;
 
     // Star field (procedural, drawn once)
     private Vector2[] _stars;
@@ -63,8 +78,18 @@ public class MainMenuManager : MonoBehaviour
             new GameObject("NetworkGameManager").AddComponent<NetworkGameManager>();
     }
 
+    private bool _pendingLaunch;
+
     private void Update()
     {
+        // BeginSimulation must be called from Update, not from OnGUI (render phase),
+        // otherwise the coroutines it schedules may silently fail to start.
+        if (_pendingLaunch)
+        {
+            _pendingLaunch = false;
+            _bootstrap.BeginSimulation(_config);
+        }
+
         if (_menuDone) return;
 
         if (_screen == Screen.Multiplayer_Join)
@@ -74,6 +99,49 @@ public class MainMenuManager : MonoBehaviour
             {
                 _scanTimer = 0f;
                 _scanning = false;
+            }
+        }
+
+        if (_screen == Screen.Multiplayer_GameRoom && !_isMultiplayerCreation)
+        {
+            // Client: poll LANDiscovery for lobby state updates from host.
+            string latest = LANDiscovery.Instance?.LastLobbyBroadcast;
+            if (latest != null && latest != _receivedLobbyBroadcast)
+            {
+                _receivedLobbyBroadcast = latest;
+                LobbyBroadcastParser.Apply(latest, _slotTypes, _slotReady);
+            }
+        }
+    }
+
+    private void EnterGameRoom(bool asHost)
+    {
+        _isMultiplayerCreation = asHost;
+        _screen = Screen.Multiplayer_GameRoom;
+        _receivedLobbyBroadcast = null;
+
+        if (asHost)
+        {
+            // Default: all slots AI except slot 0 which is the host (Human + auto-ready).
+            for (int i = 0; i < LobbySlots; i++)
+                _slotTypes[i] = SlotType.AI;
+            _slotTypes[0]  = SlotType.Human;
+            _slotReady[0]  = true; // host is always ready
+            for (int i = 1; i < LobbySlots; i++)
+                _slotReady[i] = false;
+            _localSlotIdx = 0;
+
+            // Kick off LAN broadcast so clients can discover and join.
+            LANDiscovery.Instance?.StartHostBroadcast(7777, 1);
+        }
+        else
+        {
+            // Client: wait for host broadcast before showing slots.
+            _localSlotIdx = -1; // will be assigned once a slot is taken
+            for (int i = 0; i < LobbySlots; i++)
+            {
+                _slotTypes[i] = SlotType.AI;
+                _slotReady[i] = false;
             }
         }
     }
@@ -108,6 +176,7 @@ public class MainMenuManager : MonoBehaviour
             case Screen.Multiplayer_Creation: DrawCreationScreen(sw, sh);   break;
             case Screen.Multiplayer_Lobby:   DrawMultiplayerLobby(sw, sh);  break;
             case Screen.Multiplayer_Join:    DrawLANBrowser(sw, sh);        break;
+            case Screen.Multiplayer_GameRoom: DrawGameRoom(sw, sh);         break;
         }
     }
 
@@ -240,7 +309,12 @@ public class MainMenuManager : MonoBehaviour
             : LocalizationManager.L("start_simulation");
 
         if (MenuButton(cx, y, panW, BtnH, startLabel))
-            LaunchGame();
+        {
+            if (_isMultiplayerCreation)
+                EnterGameRoom(asHost: true);
+            else
+                LaunchGame();
+        }
 
         y += BtnH + Pad;
         if (MenuButton(cx, y, panW, SlimH, LocalizationManager.L("back"), small: true))
@@ -348,9 +422,10 @@ public class MainMenuManager : MonoBehaviour
                     LocalizationManager.L("join"), BtnStyle(11)))
             {
                 NetworkGameManager.Instance?.JoinGame(game.hostIP, game.port);
-                // For now: start simulation locally (stub — real impl synchronizes seed from host)
+                // Seed will be received from host via lobby broadcast.
                 _config.worldSeed = Random.Range(0, int.MaxValue);
-                LaunchGame();
+                LANDiscovery.Instance?.Stop(); // stop scan mode; host broadcast will reach us
+                EnterGameRoom(asHost: false);
             }
             ry += rowH + 6f;
         }
@@ -364,19 +439,192 @@ public class MainMenuManager : MonoBehaviour
         }
     }
 
+    // ── Game Room (pre-game lobby) ────────────────────────────────────────────
+
+    private void DrawGameRoom(float sw, float sh)
+    {
+        bool isHost = _isMultiplayerCreation;
+        string titleEN = isHost ? "Game Room — Host" : "Game Room";
+        string titleZH = isHost ? "游戏房间 — 主机" : "游戏房间";
+        DrawPanelTitle(sw, sh,
+            LocalizationManager.CurrentLanguage == LocalizationManager.Language.Chinese
+                ? titleZH : titleEN);
+
+        float panW  = 520f;
+        float cx    = (sw - panW) * 0.5f;
+        float y     = sh * 0.20f;
+
+        // ── Column header ────────────────────────────────────────────────────
+        float slotH  = 44f;
+        float slotGap = 6f;
+        float colType  = 100f;
+        float colReady = 80f;
+        float colName  = panW - colType - colReady - Pad * 2f;
+
+        Color headerCol = new Color(0.55f, 0.75f, 1f, 0.9f);
+        GUI.color = headerCol;
+        GUI.Label(new Rect(cx,                     y, colName,  20f), "SLOT",   SmallStyle());
+        GUI.Label(new Rect(cx + colName,           y, colType,  20f), "TYPE",   SmallStyle());
+        GUI.Label(new Rect(cx + colName + colType, y, colReady, 20f), "STATUS", SmallStyle());
+        GUI.color = Color.white;
+        y += 24f;
+
+        // Divider
+        DrawRect(cx, y, panW, 1f, new Color(0.3f, 0.45f, 0.7f, 0.6f));
+        y += 6f;
+
+        // ── Slot rows ─────────────────────────────────────────────────────────
+        bool allHumanSlotsReady = true;
+
+        for (int i = 0; i < LobbySlots; i++)
+        {
+            bool isHuman = _slotTypes[i] == SlotType.Human;
+            bool ready   = _slotReady[i];
+            bool isLocal = i == _localSlotIdx;
+
+            // Row background
+            Color rowBg = isLocal
+                ? new Color(0.15f, 0.25f, 0.45f, 0.9f)
+                : new Color(0.07f, 0.10f, 0.18f, 0.85f);
+            DrawRect(cx, y, panW, slotH, rowBg);
+
+            // Slot name
+            string slotNameEN = $"Slot {i + 1}{(i == 0 && isHost ? "  (you)" : isLocal ? "  (you)" : "")}";
+            string slotNameZH = $"槽位 {i + 1}{(i == 0 && isHost ? "  (你)" : isLocal ? "  (你)" : "")}";
+            string slotName   = LocalizationManager.CurrentLanguage == LocalizationManager.Language.Chinese
+                ? slotNameZH : slotNameEN;
+            GUI.Label(new Rect(cx + 8f, y + (slotH - 18f) * 0.5f, colName - 8f, 22f),
+                slotName, SmallStyle());
+
+            // Type button (host-only toggle; others see label)
+            Rect typRect = new Rect(cx + colName, y + (slotH - 26f) * 0.5f, colType - 4f, 26f);
+            if (isHost)
+            {
+                Color prev = GUI.color;
+                GUI.color = isHuman ? new Color(0.3f, 0.65f, 1f) : new Color(0.5f, 0.5f, 0.55f);
+                if (GUI.Button(typRect, isHuman ? "Human" : "AI", BtnStyle(11)))
+                {
+                    _slotTypes[i] = isHuman ? SlotType.AI : SlotType.Human;
+                    if (_slotTypes[i] == SlotType.AI)
+                        _slotReady[i] = true; // AI is always ready
+                    else
+                        _slotReady[i] = (i == _localSlotIdx); // human only ready if local
+                    BroadcastLobbyState();
+                }
+                GUI.color = prev;
+            }
+            else
+            {
+                GUI.color = isHuman ? new Color(0.7f, 0.85f, 1f) : new Color(0.6f, 0.6f, 0.65f);
+                GUI.Label(typRect, isHuman ? "Human" : "AI", SmallStyle());
+                GUI.color = Color.white;
+            }
+
+            // Ready button / status
+            Rect rdyRect = new Rect(cx + colName + colType, y + (slotH - 26f) * 0.5f, colReady - 4f, 26f);
+            if (!isHuman)
+            {
+                GUI.color = new Color(0.3f, 0.8f, 0.4f, 0.8f);
+                GUI.Label(rdyRect, "AI ✓", SmallStyle());
+                GUI.color = Color.white;
+            }
+            else if (isLocal)
+            {
+                // Local human can toggle their own ready state.
+                Color prev = GUI.color;
+                GUI.color = ready ? new Color(0.2f, 0.75f, 0.35f) : new Color(0.7f, 0.35f, 0.2f);
+                if (GUI.Button(rdyRect, ready ? "Ready ✓" : "Not Ready", BtnStyle(10)))
+                {
+                    _slotReady[i] = !_slotReady[i];
+                    BroadcastLobbyState();
+                }
+                GUI.color = prev;
+            }
+            else
+            {
+                // Remote human — show their status from broadcast.
+                GUI.color = ready ? new Color(0.3f, 0.8f, 0.4f) : new Color(0.65f, 0.65f, 0.65f);
+                GUI.Label(rdyRect, ready ? "Ready ✓" : "Waiting…", SmallStyle());
+                GUI.color = Color.white;
+            }
+
+            if (isHuman && !ready) allHumanSlotsReady = false;
+
+            y += slotH + slotGap;
+        }
+
+        y += Pad;
+
+        // ── Host controls ────────────────────────────────────────────────────
+        if (isHost)
+        {
+            bool canStart = allHumanSlotsReady;
+            Color startCol = canStart ? new Color(0.25f, 0.70f, 0.35f) : new Color(0.35f, 0.35f, 0.35f);
+            Color prev = GUI.color;
+            GUI.color = startCol;
+            string startEN = canStart ? "Start Game" : "Waiting for players…";
+            string startZH = canStart ? "开始游戏" : "等待玩家…";
+            string startLbl = LocalizationManager.CurrentLanguage == LocalizationManager.Language.Chinese
+                ? startZH : startEN;
+            if (GUI.Button(new Rect(cx, y, panW, BtnH), startLbl, BtnStyle(14)) && canStart)
+                LaunchGame();
+            GUI.color = prev;
+            y += BtnH + Pad;
+        }
+        else
+        {
+            // Client: waiting for host to start.
+            GUI.color = new Color(0.6f, 0.7f, 0.8f, 0.8f);
+            string waitEN = "Waiting for host to start…";
+            string waitZH = "等待主机开始…";
+            GUI.Label(new Rect(cx, y, panW, BtnH),
+                LocalizationManager.CurrentLanguage == LocalizationManager.Language.Chinese
+                    ? waitZH : waitEN,
+                SmallStyle());
+            GUI.color = Color.white;
+
+            // Check if host sent a start signal.
+            if (LANDiscovery.Instance?.GameStartSignaled == true)
+                LaunchGame();
+
+            y += BtnH + Pad;
+        }
+
+        // Back / Leave
+        if (MenuButton(cx, y, panW, SlimH, LocalizationManager.L("back"), small: true))
+        {
+            LANDiscovery.Instance?.Stop();
+            _screen = isHost ? Screen.Multiplayer_Lobby : Screen.Multiplayer_Lobby;
+        }
+    }
+
+    private void BroadcastLobbyState()
+    {
+        if (!_isMultiplayerCreation) return; // only host broadcasts
+        LANDiscovery.Instance?.BroadcastLobbyState(_slotTypes, _slotReady, _config.worldSeed);
+    }
+
     // ── Launch ────────────────────────────────────────────────────────────────
 
     private void LaunchGame()
     {
         if (_isMultiplayerCreation)
         {
-            _config.worldSeed = Random.Range(0, int.MaxValue);
+            // Host: seed is already set in _config; broadcast the start signal with it.
             NetworkGameManager.Instance?.StartHost(_config);
             NetworkGameManager.Instance?.BroadcastWorldSeed(_config.worldSeed);
+            LANDiscovery.Instance?.BroadcastGameStart(_config.worldSeed);
+        }
+        else
+        {
+            // Client: use the seed that was received in the lobby broadcast.
+            int hostedSeed = LANDiscovery.Instance?.LastSeed ?? _config.worldSeed;
+            _config.worldSeed = hostedSeed;
         }
 
+        LANDiscovery.Instance?.Stop();
         _menuDone = true;
-        _bootstrap.BeginSimulation(_config);
+        _pendingLaunch = true; // actual call happens in Update to avoid OnGUI coroutine issues
     }
 
     // ── IMGUI helpers ─────────────────────────────────────────────────────────

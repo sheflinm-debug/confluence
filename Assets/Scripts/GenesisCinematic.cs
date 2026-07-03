@@ -216,15 +216,6 @@ public class GenesisCinematic : MonoBehaviour
         _cam.transform.position = new Vector3(0f, 0f, -15f);
         _cam.transform.LookAt(Vector3.zero);
 
-        // Central flash sphere.
-        GameObject burst = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        Destroy(burst.GetComponent<Collider>());
-        burst.transform.position = Vector3.zero;
-        Material burstMat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-        burstMat.color = Color.white;
-        burstMat.EnableKeyword("_EMISSION");
-        burst.GetComponent<Renderer>().material = burstMat;
-
         // Ejecta particles — small spheres launched radially outward.
         const int ParticleCount = 32;
         var particles = new (GameObject go, Vector3 dir, float speed, float size)[ParticleCount];
@@ -250,14 +241,6 @@ public class GenesisCinematic : MonoBehaviour
         {
             t += Time.deltaTime;
             float k = t / duration; // 0→1 over full duration
-
-            // Central burst: bright flash → dims and expands.
-            float flashK = Mathf.Clamp01(k * 8f);         // peaks at 1/8 of duration
-            float emStr  = Mathf.Lerp(12f, 0.2f, flashK);
-            Color flashCol = Color.Lerp(Color.white, new Color(1f, 0.7f, 0.2f), k * 0.6f);
-            burstMat.color = flashCol;
-            burstMat.SetColor("_EmissionColor", flashCol * emStr);
-            burst.transform.localScale = Vector3.one * Mathf.SmoothStep(0f, 5f, k);
 
             // Particles: grow in then fade as they speed outward.
             for (int i = 0; i < ParticleCount; i++)
@@ -291,7 +274,6 @@ public class GenesisCinematic : MonoBehaviour
             yield return null;
         }
 
-        Destroy(burst);
         for (int i = 0; i < ParticleCount; i++) Destroy(particles[i].go);
         Destroy(ring1);
         Destroy(ring2);
@@ -346,17 +328,25 @@ public class GenesisCinematic : MonoBehaviour
     private IEnumerator PhaseStarFormation(Vector3 center, SolarSystemDef solarSystem, Transform parent)
     {
         float duration = EraTimeline.Phases[EraTimeline.IntroStartIndex + 1].DurationSeconds;
-        // Separation is generous and independent of the planet's eventual full size -
-        // the planet is still IntroDisplayRadius-scale here, so a star many times that
-        // size with real clearance reads correctly instead of looking "too close."
         float lifeDist = Mathf.Sqrt(Mathf.Max(solarSystem.LifePlanetOrbitAU, 0.01f)) * VisualOrbitScale;
         float starSeparation = Mathf.Max(lifeDist + 40f, IntroDisplayRadius * 25f);
+        Vector3 starPos = center + Vector3.left * starSeparation;
 
+        // ── 1. Wide protoplanetary nebula disk appears FIRST ──────────────────────
+        // The disk is a large flat nebula centred on the future star position.
+        float nebulaOuter = Mathf.Sqrt(Mathf.Max(solarSystem.LifePlanetOrbitAU, 0.01f)) * VisualOrbitScale * 2.5f;
+        float nebulaInner = nebulaOuter * 0.02f;
+        GameObject nebulaGo = BuildDiskGo(starPos, nebulaInner, nebulaOuter, 72,
+            new Color(0.85f, 0.62f, 0.25f, 0.9f),  // inner: warm orange nebula
+            new Color(0.30f, 0.18f, 0.50f, 0.0f));  // outer: purple-dark, fades out
+        nebulaGo.transform.rotation = Quaternion.Euler(15f, 0f, 0f);
+
+        // ── 2. Star condenses from the center of the disk ─────────────────────────
         _starGo = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         _starGo.name = "Star";
         _starGo.transform.SetParent(parent);
         Destroy(_starGo.GetComponent<Collider>());
-        _starGo.transform.position = center + Vector3.left * starSeparation;
+        _starGo.transform.position = starPos;
         _starGo.transform.localScale = Vector3.zero;
         Material starMat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
         starMat.color = solarSystem.Star.Color;
@@ -364,36 +354,78 @@ public class GenesisCinematic : MonoBehaviour
         starMat.SetColor("_EmissionColor", solarSystem.Star.Color * 2f);
         _starGo.GetComponent<Renderer>().material = starMat;
 
-        _cam.transform.position = _starGo.transform.position + Vector3.back * 30f;
-        _cam.transform.LookAt(_starGo.transform.position);
+        _cam.transform.position = starPos + Vector3.back * (nebulaOuter * 1.4f);
+        _cam.transform.LookAt(starPos);
 
-        // Star reads clearly larger than the intro-scale planet, and now actually scales
-        // with the rolled star's luminosity instead of a single fixed size for every class.
         Vector3 starFinalScale = Vector3.one * StarSizeFromLuminosity(solarSystem.Star.LuminositySolar);
+
+        // Phase structure:
+        //   0.00→0.25 : nebula fades in, camera settles, star still tiny
+        //   0.25→0.75 : star grows from disk center; disk contracts inward
+        //   0.75→1.00 : star at full size, disk nearly gone (handed to PhaseAccretion)
         float t = 0f;
         while (t < duration)
         {
             t += Time.deltaTime;
-            float k = Mathf.SmoothStep(0f, 1f, t / duration);
-            _starGo.transform.localScale = starFinalScale * k;
+            float k = t / duration; // linear 0→1
+
+            // Nebula fade-in first quarter, then contracts as star brightens.
+            float nebulaAlpha = k < 0.25f
+                ? Mathf.SmoothStep(0f, 1f, k / 0.25f)          // fade in
+                : Mathf.SmoothStep(1f, 0f, (k - 0.25f) / 0.75f); // gradually contract away
+            SetDiskAlpha(nebulaGo, nebulaAlpha * 0.85f, 0f);
+            // Nebula also slowly contracts its outer radius as mass falls inward.
+            float contractK = Mathf.Clamp01((k - 0.25f) / 0.75f);
+            float contractedOuter = Mathf.Lerp(nebulaOuter, nebulaOuter * 0.35f, contractK);
+            RescaleDiskOuter(nebulaGo, contractedOuter, nebulaOuter);
+            nebulaGo.transform.Rotate(Vector3.up, 12f * Time.deltaTime);
+
+            // Star: starts condensing at 25% through, reaches full size at 100%.
+            float starK = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((k - 0.25f) / 0.75f));
+            _starGo.transform.localScale = starFinalScale * starK;
+
             yield return null;
         }
+        // Leave nebulaGo alive — PhaseAccretion transforms it into the tighter protoplanetary disk.
+        _nebulaHandoff = nebulaGo;
+    }
+
+    // Handed from PhaseStarFormation to PhaseAccretion so the disk visually continues.
+    private GameObject _nebulaHandoff;
+
+    // Rescales the outer vertices of a BuildDiskGo mesh in-place (inner stays fixed).
+    private static void RescaleDiskOuter(GameObject diskGo, float newOuter, float originalOuter)
+    {
+        var mf = diskGo.GetComponent<MeshFilter>();
+        if (mf == null) return;
+        float ratio = newOuter / Mathf.Max(originalOuter, 0.001f);
+        Vector3[] verts = mf.mesh.vertices;
+        // BuildDiskGo lays out vertices as inner (even indices) / outer (odd indices).
+        for (int i = 0; i < verts.Length; i += 2)
+        {
+            // Outer vertex is at i+1; scale its XZ from origin.
+            Vector3 v = verts[i + 1];
+            verts[i + 1] = new Vector3(v.x * ratio, v.y, v.z * ratio);
+        }
+        mf.mesh.vertices = verts;
+        mf.mesh.RecalculateNormals();
     }
 
     private IEnumerator PhaseAccretion(Vector3 center, float planetRadius, SolarSystemDef solarSystem, Transform parent)
     {
         float duration = EraTimeline.Phases[EraTimeline.IntroStartIndex + 2].DurationSeconds;
 
-        Vector3 starPos     = _starGo.transform.position;
+        Vector3 starPos      = _starGo.transform.position;
         Vector3 starToCenter = (center - starPos).normalized;
 
-        // Protoplanetary disk: a flat ring centred on the star in the plane of the solar system.
+        // Inherit the contracted nebula from PhaseStarFormation; tighten it into a
+        // proper protoplanetary disk that planets then coalesce from.
+        GameObject diskGo = _nebulaHandoff;
+        _nebulaHandoff = null;
         float diskOuter = Mathf.Sqrt(Mathf.Max(solarSystem.LifePlanetOrbitAU, 0.01f)) * VisualOrbitScale * 1.5f;
         float diskInner = diskOuter * 0.08f;
-        GameObject diskGo = BuildDiskGo(starPos, diskInner, diskOuter, 72,
-            new Color(0.72f, 0.48f, 0.18f, 0.7f), new Color(0.45f, 0.30f, 0.10f, 0.0f));
-        // Tilt the disk ~15° from horizontal so it has visual depth.
-        diskGo.transform.rotation = Quaternion.Euler(15f, 0f, 0f);
+        // Recolour the inherited mesh to a tighter, brighter protoplanetary look.
+        SetDiskAlpha(diskGo, 0.7f, 0f);
 
         var planetFinalScales = new List<Vector3>();
         foreach (var p in solarSystem.OtherPlanets)
@@ -421,10 +453,10 @@ public class GenesisCinematic : MonoBehaviour
             t += Time.deltaTime;
             float k = Mathf.SmoothStep(0f, 1f, t / duration);
 
-            // Disk: bright early then fades as planets coalesce.
-            float diskFade = 1f - Mathf.Clamp01((k - 0.4f) / 0.6f);
-            SetDiskAlpha(diskGo, diskFade * 0.7f, diskFade * 0f);
-            diskGo.transform.Rotate(Vector3.up, 8f * Time.deltaTime); // slow spin
+            // Disk fades as planets coalesce from it.
+            float diskFade = 1f - Mathf.Clamp01((k - 0.3f) / 0.7f);
+            SetDiskAlpha(diskGo, diskFade * 0.7f, 0f);
+            diskGo.transform.Rotate(Vector3.up, 8f * Time.deltaTime);
 
             for (int i = 0; i < _otherPlanetGos.Count; i++)
                 _otherPlanetGos[i].transform.localScale = planetFinalScales[i] * Mathf.Clamp01(k * 1.3f - 0.1f * i);
