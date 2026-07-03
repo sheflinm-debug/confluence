@@ -20,7 +20,7 @@ public class MainMenuManager : MonoBehaviour
     private Screen _screen = Screen.Main;
 
     // Game creation state
-    private PlanetConfig _config = PlanetConfig.Default();
+    private PlanetConfig _config;
     private bool         _isMultiplayerCreation;
 
     // LAN browser state
@@ -61,6 +61,7 @@ public class MainMenuManager : MonoBehaviour
     private void Awake()
     {
         _bootstrap = GetComponent<SimulationBootstrap>();
+        _config    = PlanetConfig.Default();
 
         // Generate star field once
         _stars          = new Vector2[StarCount];

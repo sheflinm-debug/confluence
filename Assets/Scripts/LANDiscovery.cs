@@ -68,9 +68,13 @@ public class LANDiscovery : MonoBehaviour
         _gamePort    = gamePort;
         _playerCount = playerCount;
         _running     = true;
-        _udp = new UdpClient();
+        // Bind to the discovery port so we can receive EVOSIM_DISCOVER pings
+        // from clients and reply unicast (bypasses AP-isolation / broadcast blocking).
+        _udp = new UdpClient(DiscoveryPort);
         _udp.EnableBroadcast = true;
         _broadcastTimer = BroadcastInterval; // fire immediately on first Update
+        _listenThread = new Thread(ListenLoop) { IsBackground = true, Name = "LANDiscovery-Host" };
+        _listenThread.Start();
     }
 
     public void StartClientScan()
@@ -135,7 +139,21 @@ public class LANDiscovery : MonoBehaviour
         }
         catch (Exception e)
         {
-            Debug.LogWarning($"[LANDiscovery] Send failed: {e.Message}");
+            Debug.LogWarning($"[LANDiscovery] Broadcast failed: {e.Message}");
+        }
+    }
+
+    private void SendUnicast(string ip, string msg)
+    {
+        try
+        {
+            byte[] data = Encoding.UTF8.GetBytes(msg);
+            var ep = new IPEndPoint(IPAddress.Parse(ip), DiscoveryPort);
+            _udp.Send(data, data.Length, ep);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[LANDiscovery] Unicast to {ip} failed: {e.Message}");
         }
     }
 
@@ -201,11 +219,9 @@ public class LANDiscovery : MonoBehaviour
             {
                 byte[] data = _udp.Receive(ref remoteEP);
                 string msg = Encoding.UTF8.GetString(data);
-                // Ignore our own discover pings
-                if (!msg.StartsWith(MagicDiscover))
-                {
-                    lock (_lock) _incoming.Enqueue($"{remoteEP.Address}|{msg}");
-                }
+                // Queue everything; host needs to respond to discover pings.
+                // Client ignores its own pings by checking _isHost in HandlePacket.
+                lock (_lock) _incoming.Enqueue($"{remoteEP.Address}|{msg}");
             }
             catch (ThreadInterruptedException) { break; }
             catch (SocketException) { if (!_running) break; }
@@ -224,6 +240,12 @@ public class LANDiscovery : MonoBehaviour
         string ip  = raw[..sep];
         string msg = raw[(sep + 1)..];
 
+        if (msg.StartsWith(MagicDiscover))
+        {
+            // Client is scanning — reply unicast so they find us even if broadcast is blocked.
+            if (_isHost) SendUnicast(ip, $"{MagicGame}:{SystemInfo.deviceName}:{_gamePort}:{_playerCount}");
+            return;
+        }
         if (msg.StartsWith(MagicGame + ":"))
         {
             HandleGamePresence(ip, msg);
