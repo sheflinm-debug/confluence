@@ -69,10 +69,10 @@ public class SimulationBootstrap : MonoBehaviour
     [Tooltip("Solar tide strength relative to a notional close moon (no moon system exists yet in this codebase, so the star is currently the only tidal source - see TidalForceManager for the generalization path).")]
     public float starTidalRelativeStrength = 0.45f;
 
-    [Header("Origin organism (single founder - lineages branch off it via speciation, not pre-seeded)")]
-    public int communityCount = 1;
-    public int minMembersPerCommunity = 1;
-    public int maxMembersPerCommunity = 1;
+    [Header("Founding communities — 8 independent founder lineages, each meant to diversify into its own kingdom")]
+    public int communityCount = 8;
+    public int minMembersPerCommunity = 5;
+    public int maxMembersPerCommunity = 10;
     public float preferenceVariance = 8f; // spread of temp/moisture preference within the colony
 
     [Header("Starting trait distribution (Section 6a: 0-100, 50 = world-start average)")]
@@ -185,6 +185,7 @@ public class SimulationBootstrap : MonoBehaviour
         // then tectonics/mesh (liquid pools into the terrain), then the colony (which
         // snapshots the now-real atmosphere as its genesis "ideal mix").
         RockArchetypeDef archetype = RockArchetypeTable.Roll();
+        PlanetPalette.SetGround(archetype); // so organism/settlement colors can dodge this world's ground hues
 
         PlanetGravity gravity = gameObject.AddComponent<PlanetGravity>();
         gravity.Init(archetype);
@@ -205,6 +206,11 @@ public class SimulationBootstrap : MonoBehaviour
         PlanetTemperature temperature = gameObject.AddComponent<PlanetTemperature>();
         temperature.Init(atmosphere.RolledType, liquidCandidate);
 
+        // Clamp condensable gas fractions to their thermodynamic saturation limits at the
+        // rolled temperature and pressure (e.g. 73% H2O at 507K/104bar is physically
+        // impossible — the excess would be liquid, not vapour).
+        atmosphere.ApplyPhaseConstraints(temperature.CurrentK, atmosphere.PressureBar);
+
         // Try the atmosphere-implied liquid first; if temperature missed the window use
         // the temperature-based best match (covers "Carbon-rich at 400K" → null Hydrocarbon case).
         LiquidDef liquid = liquidCandidate != null
@@ -217,6 +223,19 @@ public class SimulationBootstrap : MonoBehaviour
 
         SolarSystemDef solarSystem = StarSystemGenerator.Generate(temperature.CurrentK);
         temperature.SetOrbit(solarSystem.Star.LuminositySolar, solarSystem.LifePlanetOrbitAU);
+
+        // Roll the organism biochemistry AFTER SetOrbit so the viability filter and
+        // phase-constraint check both see the real star-derived temperature. This prevents
+        // AssignRespirationRoles from injecting a breathed gas (e.g. NH3) that would
+        // immediately condense at the planet's actual orbital temperature.
+        // Re-run phase constraints once more after biochemistry to catch any condensable
+        // breathed gas added by AssignRespirationRoles.
+        atmosphere.ApplyBiochemistry();
+        atmosphere.ApplyPhaseConstraints(temperature.CurrentK, atmosphere.PressureBar);
+        // After constraining, re-anchor CrisisLow to the condensed stable fraction so
+        // the GREAT GAS EVENT doesn't trigger immediately just because the breathed gas
+        // condensed at startup (organisms should adapt, not instantly mass-die).
+        atmosphere.RecalibrateCrisisLow();
 
         // Eccentricity/axial tilt are rolled now (alongside the rest of world gen) but
         // OrbitalSeasons doesn't start ticking the seasonal cycle until BeginGameplay()
@@ -368,10 +387,6 @@ public class SimulationBootstrap : MonoBehaviour
                         tectonics.Elevation, null);
                 }
 
-                GameObject atmosphereVisualGo = new GameObject("AtmosphereVisual");
-                AtmosphereVisual atmosphereVisual = atmosphereVisualGo.AddComponent<AtmosphereVisual>();
-                atmosphereVisual.Build(planetRadius, _center, atmosphere.RolledType, atmosphere.PressureBar, transform);
-
                 // Polar ice overlay: rendered at vertices where ClimateManager reports cold
                 // (poles always cold after latitude-gradient fix; shifts with seasons).
                 GameObject polarIceGo = new GameObject("PolarIceManager");
@@ -397,14 +412,24 @@ public class SimulationBootstrap : MonoBehaviour
                     stormVisual.Init(tectonics, _center, planetRadius, elevationWorldScale, transform);
                 }
 
-                // Place the founding organism literally inside a flooded tile, not
-                // anywhere on the sphere - it must originate in the liquid.
+                // Place the founding organism near a hydrothermal vent if any exist —
+                // chemosynthetics depend on vent energy and starve without it.
+                // Fall back to any flooded vertex when no vents are present.
                 Vector3? wetOrigin = null;
                 if (liquid != null)
                 {
-                    int floodedVertex = PlanetTileMesh.PickRandomFloodedVertex(tectonics, seaLevel);
-                    if (floodedVertex >= 0)
-                        wetOrigin = _center + tectonics.UnitVerts[floodedVertex] * planetRadius;
+                    var ventMgrInstance = HydrothermalVentManager.Instance;
+                    if (ventMgrInstance != null && ventMgrInstance.VentCount > 0)
+                    {
+                        var vent = ventMgrInstance.Vents[UnityEngine.Random.Range(0, ventMgrInstance.VentCount)];
+                        wetOrigin = vent.WorldPosition;
+                    }
+                    else
+                    {
+                        int floodedVertex = PlanetTileMesh.PickRandomFloodedVertex(tectonics, seaLevel);
+                        if (floodedVertex >= 0)
+                            wetOrigin = _center + tectonics.UnitVerts[floodedVertex] * planetRadius;
+                    }
                 }
 
                 // Solar flux factor: L/d² normalized so Earth at 1 AU around a sun-like star = 1.
@@ -412,22 +437,42 @@ public class SimulationBootstrap : MonoBehaviour
                 AgentController.WorldSolarFluxFactor = solarSystem.Star.LuminositySolar
                     / Mathf.Max(solarSystem.LifePlanetOrbitAU * solarSystem.LifePlanetOrbitAU, 0.01f);
 
+                GameLog.Init();
+                GameLog.RegisterSpawner(agentSpawner);
+
+                // Priority 7: geological-time mapping + world context, logged once at bootstrap so the
+                // sim-seconds ↔ millions-of-years question is answerable without re-deriving it.
+                GameLog.LogGlobal($"[World] liquid={(liquid != null ? liquid.Name : "NONE")} star={solarSystem.Star.SpectralClass} " +
+                                  $"L={solarSystem.Star.LuminositySolar:F3}sol orbitAU={solarSystem.LifePlanetOrbitAU:F2} " +
+                                  $"inHZ={solarSystem.LifePlanetInHabitableZone} wetOrigin={(wetOrigin.HasValue ? "yes" : "NONE")} " +
+                                  $"founders={communityCount} membersPerFounder={minMembersPerCommunity}-{maxMembersPerCommunity}");
+
                 // Community 0 = player's founding organism, always placed in liquid if available.
                 agentSpawner.SpawnCommunities(communityCount, minMembersPerCommunity, maxMembersPerCommunity,
                     visionMean, visionStdDev, speedMean, speedStdDev, strengthMean, strengthStdDev,
                     hardinessMean, hardinessStdDev, preferenceVariance, wetOrigin);
 
+                // Priority 1/8: spawn-completeness marker — makes a zero-spawn run (Test 1) immediately
+                // obvious instead of an unexplained empty world. If spawned=0, spawning failed.
+                GameLog.LogGlobal($"[Bootstrap] SPAWN_COMPLETE spawned={agentSpawner.ActiveAgents.Count} " +
+                                  $"expected≈{communityCount * minMembersPerCommunity}-{communityCount * maxMembersPerCommunity}");
+                Debug.Log($"[Bootstrap] SPAWN_COMPLETE spawned={agentSpawner.ActiveAgents.Count}");
+
                 // All biological diversity emerges via SpeciationManager from the single
                 // founding lineage — no pre-seeded NPC communities.
 
-                EraPostProcessManager postProcess = gameObject.AddComponent<EraPostProcessManager>();
+                gameObject.AddComponent<EraPostProcessManager>();
                 AudioManager audioManager = gameObject.AddComponent<AudioManager>();
                 audioManager.Init(agentSpawner);
-                audioManager.OnIntroBegin();
-                postProcess.OnIntroBegin();
 
                 SpeciationManager speciationManager = gameObject.AddComponent<SpeciationManager>();
                 speciationManager.Init(agentSpawner);
+
+                TerritorialityManager territorialityManager = gameObject.AddComponent<TerritorialityManager>();
+                territorialityManager.Init(agentSpawner);
+
+                FounderSurvivalManager founderSurvivalManager = gameObject.AddComponent<FounderSurvivalManager>();
+                founderSurvivalManager.Init(agentSpawner);
 
                 EraManager eraManager = gameObject.AddComponent<EraManager>();
                 eraManager.Init(agentSpawner);
@@ -438,6 +483,19 @@ public class SimulationBootstrap : MonoBehaviour
                 Era3Manager era3Manager = gameObject.AddComponent<Era3Manager>();
                 era3Manager.Init(agentSpawner);
                 gameObject.AddComponent<Era3HUD>();
+
+                // Renders Era 3's civilizations in the world: settlement markers (village→town→city)
+                // and territory/border overlay. Reuses the tectonic mesh + transparent overlay shader.
+                Era3VisualManager era3Visual = gameObject.AddComponent<Era3VisualManager>();
+                // Parent to the SPINNING planet-visual transform (which holds the terrain + liquid
+                // shell and is rotated by SolarSystemRuntime) — NOT the static bootstrap transform —
+                // so settlements/territory co-rotate with the terrain instead of circling the world.
+                era3Visual.Init(tectonics, planetRadius, elevationWorldScale, cinematic.LifePlanetVisualGo.transform);
+
+                // TEMPORARY: dev buttons to fast-forward to Era 2 / Era 3 for testing. Remove later.
+                gameObject.AddComponent<DebugEraSkipHUD>().Init(agentSpawner);
+
+                gameObject.AddComponent<Era3Calendar>();
 
                 SpeciesRelationshipManager speciesRelMgr = gameObject.AddComponent<SpeciesRelationshipManager>();
                 speciesRelMgr.Init(agentSpawner);
@@ -463,7 +521,7 @@ public class SimulationBootstrap : MonoBehaviour
                     orbitCam.FocusOnDirection(focusDir, zoomDistance: 12f);
                     orbitCam.EnablePlanetLock();
                 }
-            });
+            }, atmosphere.RolledType, atmosphere.PressureBar);
     }
 
     private GameObject BuildPrimitivePrefab(PrimitiveType type, float scale, Color color)
@@ -478,7 +536,6 @@ public class SimulationBootstrap : MonoBehaviour
             mat.color = color;
             r.material = mat;
         }
-        go.SetActive(true);
         return go;
     }
 

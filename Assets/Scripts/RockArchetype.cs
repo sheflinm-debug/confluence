@@ -37,15 +37,15 @@ public static class RockArchetypeTable
 
         new RockArchetypeDef { Id = RockArchetypeId.FelsicGranitic, Weight = 9,
             Primary = new Color32(0xD8,0xC7,0xB8,0xFF), Accent = new Color32(0xE8,0xE0,0xD5,0xFF),
-            AtmoBoosts = new Dictionary<string, float> { {"N2-O2 (biotic)",2.5f}, {"Abiotic-O2 false-positive",2f}, {"CO2-dominant (Venus/Mars-type)",1.5f} } },
+            AtmoBoosts = new Dictionary<string, float> { {"N2-O2 (biotic)",2.5f}, {"Abiotic-O2 false-positive",2f}, {"CO2-dominant (Venus/Mars-type)",1.2f} } },
 
         new RockArchetypeDef { Id = RockArchetypeId.OxidizedIronRich, Weight = 10,
             Primary = new Color32(0x9C,0x4A,0x1A,0xFF), Accent = new Color32(0xB8,0x5C,0x38,0xFF),
-            AtmoBoosts = new Dictionary<string, float> { {"CO2-dominant (Venus/Mars-type)",2f}, {"Thin exosphere / negligible",2f}, {"CH4-N2 reducing",0.3f} } },
+            AtmoBoosts = new Dictionary<string, float> { {"CO2-dominant (Venus/Mars-type)",1.5f}, {"Thin exosphere / negligible",2f}, {"CH4-N2 reducing",0.3f} } },
 
         new RockArchetypeDef { Id = RockArchetypeId.CarbonateEvaporite, Weight = 5,
             Primary = new Color32(0xED,0xE6,0xD6,0xFF), Accent = new Color32(0xC9,0xBF,0xA5,0xFF),
-            AtmoBoosts = new Dictionary<string, float> { {"CO2-dominant (Venus/Mars-type)",2f}, {"SO2-H2S volcanic",2f} } },
+            AtmoBoosts = new Dictionary<string, float> { {"CO2-dominant (Venus/Mars-type)",1.4f}, {"SO2-H2S volcanic",2f} } },
 
         new RockArchetypeDef { Id = RockArchetypeId.SulfideSulfurRich, Weight = 6,
             Primary = new Color32(0xD4,0xAC,0x0D,0xFF), Accent = new Color32(0x2B,0x2B,0x2B,0xFF),

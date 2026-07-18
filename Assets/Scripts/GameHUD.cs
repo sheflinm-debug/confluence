@@ -26,6 +26,12 @@ public class GameHUD : MonoBehaviour
     private enum RankTab { Population, Strength, Intelligence }
     private RankTab _rankTab = RankTab.Population;
 
+    // Inline community-rename state (Ranks tab) — player can click their own community's name to
+    // rename it. Single shared buffer since only the player's own community is ever renameable.
+    private bool   _renamingCommunity;
+    private string _renameBuffer = "";
+    private const string RenameFieldControlName = "CommunityRenameField";
+
     private const float PanelW   = 270f;
     private const float TabH     = 26f;
     private const float ToggleH  = 20f;
@@ -84,11 +90,14 @@ public class GameHUD : MonoBehaviour
             Vector3 sp = cam.WorldToScreenPoint(a.transform.position);
             if (sp.z <= 0f) continue;
 
-            // Occlusion: skip agents behind the planet surface.
+            // Occlusion: skip agents on the far side of the planet. Uses a stable geometric horizon
+            // test (is the agent's outward surface normal facing the camera?) rather than a physics
+            // raycast against the low-poly, per-frame-rotating planet collider — the raycast
+            // intermittently self-hit the faceted surface at the agent's feet, making markers flicker.
             Vector3 agentPos = a.transform.position;
             Vector3 camPos   = cam.transform.position;
-            float   dist     = Vector3.Distance(camPos, agentPos);
-            if (Physics.Raycast(new Ray(camPos, (agentPos - camPos).normalized), dist - 0.1f)) continue;
+            Vector3 surfaceNormal = (agentPos - agentSpawner.planetCenter).normalized;
+            if (Vector3.Dot(surfaceNormal, (camPos - agentPos).normalized) < 0f) continue; // back hemisphere
 
             _markerPositions.Add(new Vector2(sp.x, Screen.height - sp.y));
             if (!colorKnown) { _markerColor = a.lineageColor; colorKnown = true; }
@@ -131,6 +140,26 @@ public class GameHUD : MonoBehaviour
         float innerW   = PanelW - Pad * 2f;
         float contentX = panelX + Pad;
         float y        = panelY + ToggleH + Pad;
+
+        // ── Persistent stats strip (always visible above tabs) ────────────────
+        {
+            // ActiveAgents.Count alone undercounts once Era 3 settlement absorption has begun — every
+            // organism folded into a settlement leaves ActiveAgents permanently, so its population
+            // must be added back in from the settlements themselves to get a true total.
+            int totalPop = agentSpawner != null ? agentSpawner.ActiveAgents.Count : 0;
+            if (Era3Manager.Instance != null && Era3Manager.Instance.IsActive)
+                totalPop += Mathf.RoundToInt(Era3Manager.Instance.TotalSettlementPopulation());
+            int living   = SpeciationManager.Instance != null ? SpeciationManager.Instance.SpeciesCount : 1;
+            int extinct  = SpeciationManager.Instance != null ? SpeciationManager.Instance.ExtinctSpeciesCount : 0;
+            // No hard population cap anymore — carrying capacity is purely emergent from energy math.
+            string statsText = $"Species: {living} living / {extinct} extinct   Pop: {totalPop}";
+            var stripStyle = new GUIStyle(GUI.skin.label) { fontSize = 11 };
+            stripStyle.normal.textColor = new Color(0.9f, 0.85f, 0.6f); // warm gold — distinct from tab labels
+            GUI.Label(new Rect(contentX, y, innerW, 16f), statsText, stripStyle);
+            y += 16f;
+            DrawRect(contentX, y, innerW, 1f, new Color(0.4f, 0.4f, 0.4f, 0.4f));
+            y += 2f;
+        }
 
         // ── Tab row (always visible, outside scroll) ──────────────────────────
         string[] tabs = LocalizationManager.TabLabels();
@@ -192,9 +221,19 @@ public class GameHUD : MonoBehaviour
     {
         Section(x, ref y, w, LocalizationManager.L("sec_population"));
         int total   = agentSpawner != null ? agentSpawner.ActiveAgents.Count : 0;
-        int maxPop  = EraManager.Instance != null ? EraManager.Instance.MaxPopulation : 0;
-        int species = SpeciationManager.Instance != null ? SpeciationManager.Instance.SpeciesCount : 1;
-        SmallLabel(x, ref y, w, $"Organisms: {total} / {maxPop}   Species: {species}");
+        if (Era3Manager.Instance != null && Era3Manager.Instance.IsActive)
+            total += Mathf.RoundToInt(Era3Manager.Instance.TotalSettlementPopulation());
+        int living  = SpeciationManager.Instance != null ? SpeciationManager.Instance.SpeciesCount : 1;
+        int extinct = SpeciationManager.Instance != null ? SpeciationManager.Instance.ExtinctSpeciesCount : 0;
+        int hist    = SpeciationManager.Instance != null ? SpeciationManager.Instance.HistoricalSpeciesCount : 1;
+        SmallLabel(x, ref y, w, $"Organisms: {total}   Species: {living}");
+        SmallLabel(x, ref y, w, $"Historical: {hist} total  |  Extinct: {extinct}");
+
+        if (Era3Manager.Instance != null && Era3Manager.Instance.IsActive)
+        {
+            int polities = (Era3Manager.Instance.PlayerCiv != null ? 1 : 0) + Era3Manager.Instance.NpcCivs.Count;
+            SmallLabel(x, ref y, w, $"Polities: {polities}   Settlements: {Era3Manager.Instance.Settlements.Count}");
+        }
 
         if (SpeciationManager.Instance != null)
         {
@@ -281,6 +320,16 @@ public class GameHUD : MonoBehaviour
 
         if (player == null)
         {
+            // Once a community is fully civilized, EVERY member gets absorbed into settlements
+            // (Phase 1's Era 3 lag fix) — FindPlayerAgent() then permanently returns null, and this
+            // pane used to just say "waiting for first organism" forever even with a thriving,
+            // populous civilization. Falls back to civ/settlement + the last-known Era 2 record
+            // instead of the live organism fields (Backbone/Sociality/etc.) that no longer exist.
+            if (Era3Manager.Instance != null && Era3Manager.Instance.IsActive && Era3Manager.Instance.PlayerCiv != null)
+            {
+                DrawMinePageCivilized(x, ref y, w);
+                return;
+            }
             SmallLabel(x, ref y, w, "(waiting for first organism…)");
             return;
         }
@@ -290,7 +339,7 @@ public class GameHUD : MonoBehaviour
         GUI.color = player.lineageColor;
         GUI.DrawTexture(new Rect(x, y + 1f, 14f, 14f), Texture2D.whiteTexture);
         GUI.color = prev;
-        SmallLabelAt(x + 18f, y, w - 70f, $"Comm {player.communityId} — {player.AtmoLineage}");
+        SmallLabelAt(x + 18f, y, w - 70f, $"{CommunityNameRegistry.GetName(player.communityId)} — {player.AtmoLineage}");
         if (GUI.Button(new Rect(x + w - 58f, y - 1f, 58f, 16f), "→ Focus", BtnStyle(10)))
         {
             FocusOnCommunity(playerCommunityId);
@@ -309,7 +358,13 @@ public class GameHUD : MonoBehaviour
         SmallLabel(x, ref y, w, $"Appendages : {player.Manipulation}");
         SmallLabel(x, ref y, w, $"Sociality  : {player.Sociality}");
         SmallLabel(x, ref y, w, $"Neural     : {player.NeuralComplexity}");
-        SmallLabel(x, ref y, w, $"Medium     : {player.CurrentMedium}");
+        // CurrentMedium is the INSTANTANEOUS position (is this individual physically in liquid right
+        // now); IsAquatic is the LOCKED habitat this lineage colonized (see AgentController.ColonizeLand
+        // / ReturnToSea). These can legitimately differ — a land-colonized organism standing in a puddle
+        // still reads "Sea" for CurrentMedium — so show both, or the pairing reads as a contradiction
+        // (e.g. "Medium: Sea" next to a Fire Mastery threshold, which is gated on habitat, not position).
+        string habitatLabel = player.IsAquatic ? "aquatic species" : "land species";
+        SmallLabel(x, ref y, w, $"Medium     : {player.CurrentMedium} (currently)  [{habitatLabel}]");
         string sexLabel = player.IsSexual
             ? $"{player.Sex}{(player.CanChangeSex ? " (hermaphrodite)" : "")}"
             : "Asexual";
@@ -320,24 +375,31 @@ public class GameHUD : MonoBehaviour
         // ── Biology section: gas/liquid chemistry ──────────────────────────────
         y += 4f;
         Section(x, ref y, w, "BIOLOGY");
+        // Both read the SAME underlying respiration-gas fields (BreathedGasName/ExpelledGasName) —
+        // previously "Expels" ignored ExpelledGasName and instead showed generic flavor-text keyed
+        // only on Metabolism type (a completely separate axis), so an organism whose real rolled
+        // biochemistry breathed CO2 and expelled O2 could still display "Expels: CO2" if its
+        // Metabolism happened to be Heterotrophic — a display bug, not an actual same-gas metabolism.
         string breathes = string.IsNullOrEmpty(player.BreathedGasName) ? "—" : player.BreathedGasName;
         SmallLabel(x, ref y, w, $"Breathes   : {breathes}");
-        string exhales = player.Metabolism switch
-        {
-            MetabolismType.Phototrophic   => "O₂ (photosynthesis byproduct)",
-            MetabolismType.Heterotrophic  => "CO₂ (aerobic respiration)",
-            MetabolismType.Mixotrophic    => "O₂ / CO₂ (dual pathway)",
-            _                             => "Reduced compounds (chemosynthesis)",
-        };
+        string exhales = string.IsNullOrEmpty(player.ExpelledGasName) ? "—" : player.ExpelledGasName;
         SmallLabel(x, ref y, w, $"Expels     : {exhales}");
         string liquidAffinity = string.IsNullOrEmpty(player.RequiredLiquidKind)
             ? "—" : player.RequiredLiquidKind;
         SmallLabel(x, ref y, w, $"Liquid     : {liquidAffinity}");
         SmallLabel(x, ref y, w, $"Atmo-lineage: {player.AtmoLineage}");
 
-        int total  = agentSpawner != null ? agentSpawner.ActiveAgents.Count : 0;
-        int maxPop = EraManager.Instance != null ? EraManager.Instance.MaxPopulation : 0;
-        SmallLabel(x, ref y, w, $"Population: {total} / {maxPop}");
+        // This is under "MY COMMUNITY" — it must be scoped to the player's OWN community, not every
+        // living organism in the world (the previous ActiveAgents.Count was unfiltered by community,
+        // a separate bug from the settlement-absorption undercount below). Add the player's own
+        // settlements' population back in for the same reason as the other two readouts above.
+        int total = 0;
+        if (agentSpawner != null)
+            foreach (var a in agentSpawner.ActiveAgents)
+                if (a != null && a.communityId == player.communityId) total++;
+        if (Era3Manager.Instance != null && Era3Manager.Instance.IsActive)
+            total += Mathf.RoundToInt(Era3Manager.Instance.SettlementPopulationForCiv(player.communityId));
+        SmallLabel(x, ref y, w, $"Population: {total}");
 
         // ── Era 2 Intelligence (shown once Era 2 activates) ─────────────
         if (Era2Manager.Instance != null && Era2Manager.Instance.IsActive)
@@ -364,14 +426,41 @@ public class GameHUD : MonoBehaviour
                 if (rec.SocialStructure != SocialStructureType.Unset)
                     SmallLabel(x, ref y, w, $"Social Struct.: {rec.SocialStructure}");
 
+                // End-of-Era-2 thresholds. Full names so the "FireMastery" THRESHOLD is not confused
+                // with the "Harness Fire" GENE (which unlocks Pyrotechnology and is listed under genes).
                 string thresholds = "";
-                if (rec.ThresholdLLFP)                thresholds += "LLFP ";
-                if (rec.ThresholdFireMastery)          thresholds += "Fire ";
-                if (rec.ThresholdCumulativeCulture)    thresholds += "Culture ";
-                if (rec.ThresholdCommunicationCodeified) thresholds += "Codified ";
-                if (rec.ThresholdLaborFormalized)      thresholds += "Labor ";
-                if (!string.IsNullOrEmpty(thresholds))
-                    SmallLabel(x, ref y, w, $"Thresholds    : {thresholds.Trim()}");
+                if (rec.ThresholdLLFP)                     thresholds += "LLFP ";
+                if (rec.ThresholdFireMastery)             thresholds += "FireMastery ";
+                if (rec.ThresholdCumulativeCulture)       thresholds += "CumulativeCulture ";
+                if (rec.ThresholdCommunicationCodeified)  thresholds += "CommCodified ";
+                if (rec.ThresholdLaborFormalized)         thresholds += "LaborFormalized ";
+                if (rec.ThresholdColonialEngineering)     thresholds += "ColonialEng ";
+                if (rec.ThresholdBiosphereTerraforming)   thresholds += "Terraforming ";
+                if (rec.ThresholdBloomDominance)          thresholds += "BloomDominance ";
+                if (rec.ThresholdTrophicApex)             thresholds += "TrophicApex ";
+                SmallLabel(x, ref y, w, $"Thresholds    : {(string.IsNullOrEmpty(thresholds) ? "none yet" : thresholds.Trim())} ({rec.ThresholdCount}/9)");
+                if (Era3Manager.Instance != null && Era3Manager.Instance.IsActive && Era3Manager.Instance.PlayerCiv != null)
+                {
+                    SmallLabel(x, ref y, w, $"Era 3 path    : {Era3Manager.Instance.PlayerCiv.Path}");
+                    int mySettlements = 0;
+                    foreach (var s in Era3Manager.Instance.Settlements)
+                        if (s.OwnerCivId == playerCommunityId) mySettlements++;
+                    SmallLabel(x, ref y, w, $"Settlements   : {mySettlements}  (see Civilization > Settlements)");
+                }
+
+                // ── Era 3 gate readout: exactly what still gates the jump to Era 3 ──
+                if (Era2Manager.Instance.TryGetPlayerEra3Gate(out bool hasFork, out bool hasComm, out bool hasThresh, out _))
+                {
+                    string Chk(bool b) => b ? "[x]" : "[ ]";
+                    SmallLabel(x, ref y, w, $"Era3 gate     : Arch {Chk(hasFork)}  Comm {Chk(hasComm)}  Threshold {Chk(hasThresh)}");
+                    float remain = Mathf.Max(0f, Era2Manager.Era3Ceiling - Era2Manager.Instance.Era2Elapsed);
+                    string ceilingLine = Era2Manager.Instance.Era3GateFired
+                        ? "Era3 unlocked!"
+                        : (hasFork && hasComm && hasThresh)
+                            ? "achievement met → advancing"
+                            : $"or survive ceiling: {remain:F0}s left";
+                    SmallLabel(x, ref y, w, $"              {ceilingLine}");
+                }
             }
         }
 
@@ -394,6 +483,70 @@ public class GameHUD : MonoBehaviour
         TraitBar(x, ref y, w, "UV Tol",    player.uvTolerance);
         TraitBar(x, ref y, w, "Pres Tol",  player.pressureTolerance);
         TraitBar(x, ref y, w, "Therm Tol", player.thermalCycleTolerance);
+    }
+
+    /// "MY COMMUNITY" once the player's community has no live organisms left to sample (everyone's
+    /// absorbed into settlements) — identifies the civ from CivilizationState/Era2Record instead,
+    /// since that's the only place this data still lives at that point.
+    private void DrawMinePageCivilized(float x, ref float y, float w)
+    {
+        var mgr = Era3Manager.Instance;
+        var civ = mgr.PlayerCiv;
+
+        SmallLabelAt(x, y, w - 70f, $"{civ.Name}  —  {civ.Path}  ({civ.Architecture})");
+        if (GUI.Button(new Rect(x + w - 58f, y - 1f, 58f, 16f), "→ Focus", BtnStyle(10)))
+        {
+            FocusOnCommunity(playerCommunityId);
+            _highlightCommunityId = playerCommunityId;
+        }
+        y += 18f;
+
+        // Founder biology snapshot — the pane's old identity readout (Kingdom/Backbone/Metabolism/
+        // gas exchange) with no live organism to read it FROM anymore; see CivilizationState's
+        // Founder* fields, snapshotted once at civilization time before absorption.
+        SmallLabel(x, ref y, w, $"Kingdom      : {civ.FounderKingdom}");
+        SmallLabel(x, ref y, w, $"Backbone     : {civ.FounderBackbone}");
+        SmallLabel(x, ref y, w, $"Metabolism   : {civ.FounderMetabolism}");
+        SmallLabel(x, ref y, w, $"Breathes     : {civ.FounderBreathedGas}   Expels: {civ.FounderExpelledGas}");
+        SmallLabel(x, ref y, w, $"Liquid       : {civ.FounderLiquidKind}");
+
+        var rec = Era2Manager.Instance != null ? Era2Manager.Instance.GetRecord(playerCommunityId) : null;
+        if (rec != null)
+        {
+            SmallLabel(x, ref y, w, $"Intel. Index : {rec.II:F2}");
+            if (rec.SocialStructure != SocialStructureType.Unset)
+                SmallLabel(x, ref y, w, $"Social Struct: {rec.SocialStructure}");
+            if (rec.CommMedium != CommunicationMedium.Unset)
+                SmallLabel(x, ref y, w, $"Comm. Medium : {rec.CommMedium}");
+        }
+
+        int settlementCount = 0; float pop = 0f;
+        foreach (var s in mgr.Settlements)
+            if (s.OwnerCivId == playerCommunityId) { settlementCount++; pop += s.Population; }
+        SmallLabel(x, ref y, w, $"Settlements  : {settlementCount}  (see Civilization > Settlements)");
+        SmallLabel(x, ref y, w, $"Population   : {pop:F0}");
+        SmallLabel(x, ref y, w, $"Resilience   : {civ.Resilience:P0}{(civ.HasCollapsed ? "  — COLLAPSED" : "")}");
+        if (civ.Roster.Count > 1)
+            SmallLabel(x, ref y, w, $"Roster       : {civ.Roster.Count} communities  (Diversity {Era3Polity.RosterShannonDiversity(civ.Roster):F2})");
+
+        // population-energy-aggregation-spec.md's Cohort model tracks real, continuously-updated
+        // trait data for the civ's own population (nudged by every absorption/birth event) — this is
+        // MORE than the frozen Founder* snapshot above ever gave, so show it distinctly.
+        var coreCohort = mgr.FindCivCoreCohort(playerCommunityId);
+        if (coreCohort != null)
+        {
+            y += 4f;
+            Section(x, ref y, w, "CURRENT POPULATION (live, evolving)");
+            SmallLabel(x, ref y, w, $"Metabolism   : {coreCohort.Traits.Metabolism}   Backbone: {coreCohort.Traits.Backbone}");
+            SmallLabel(x, ref y, w, $"Mean size    : {coreCohort.Traits.MeanSizeScale:F3}  (σ² {coreCohort.Traits.VarianceSizeScale:F4})");
+            SmallLabel(x, ref y, w, $"Photo eff.   : {coreCohort.Traits.MeanPhotoEfficiency:F2}   Chemo eff.: {coreCohort.Traits.MeanChemoEfficiency:F2}");
+            SmallLabel(x, ref y, w, $"Core biomass : {coreCohort.Biomass:F1}  (this settlement's population cohort)");
+        }
+
+        y += 4f;
+        Section(x, ref y, w, "ERA 3");
+        SmallLabel(x, ref y, w, "Full policy, settlement, tech/idea, polity, and warfare controls are");
+        SmallLabel(x, ref y, w, "in the Civilization panel (top-left) — this page is identification-only.");
     }
 
     private void DrawRanksPage(float x, ref float y, float w)
@@ -424,6 +577,22 @@ public class GameHUD : MonoBehaviour
             pop.TryGetValue(c, out int pc); pop[c] = pc + 1;
             str.TryGetValue(c, out float s); str[c] = s + a.strengthTrait;
             if (!color.ContainsKey(c)) color[c] = a.lineageColor;
+        }
+
+        // Once a community is fully civilized, its population lives in Era 3 settlements, not
+        // ActiveAgents — the loop above then contributes NOTHING for it, and since `ids` (below) is
+        // built purely from `pop`'s keys, a civ with real, growing population could vanish from the
+        // rankings entirely even though the top-strip "Pop" total already accounts for settlements
+        // (see Era3Manager.TotalSettlementPopulation). Add it back in here, additively, same pattern.
+        if (Era3Manager.Instance != null && Era3Manager.Instance.IsActive)
+        {
+            foreach (var s in Era3Manager.Instance.Settlements)
+            {
+                if (s.OwnerCivId < 0) continue;
+                pop.TryGetValue(s.OwnerCivId, out int pc);
+                pop[s.OwnerCivId] = pc + Mathf.RoundToInt(s.Population);
+                if (!color.ContainsKey(s.OwnerCivId)) color[s.OwnerCivId] = Era3VisualManager.CivColor(s.OwnerCivId);
+            }
         }
 
         // Build intelligence totals from Era2Manager if active.
@@ -460,6 +629,45 @@ public class GameHUD : MonoBehaviour
                 DrawRect(rowRect.x, rowRect.y, rowRect.width, rowRect.height,
                     new Color(1f, 0.85f, 0.4f, 0.10f));
 
+            bool renamingThisRow = isPlayer && _renamingCommunity;
+
+            if (renamingThisRow)
+            {
+                // Inline rename: text field + OK/Cancel replace the row for the duration of editing.
+                // Deliberately skip the row-focus button this frame so clicks/typing inside the field
+                // don't also swing the camera.
+                GUI.SetNextControlName(RenameFieldControlName);
+                _renameBuffer = GUI.TextField(new Rect(x + 14f, y, w - 90f, 16f), _renameBuffer, 24);
+                bool confirmedByEnter = Event.current.type == EventType.KeyDown
+                    && Event.current.keyCode == KeyCode.Return
+                    && GUI.GetNameOfFocusedControl() == RenameFieldControlName;
+                if (confirmedByEnter) Event.current.Use();
+                if (confirmedByEnter || GUI.Button(new Rect(x + w - 74f, y, 34f, 16f), "OK", BtnStyle(9)))
+                {
+                    CommunityNameRegistry.SetName(cid, _renameBuffer);
+                    _renamingCommunity = false;
+                }
+                if (GUI.Button(new Rect(x + w - 38f, y, 34f, 16f), "X", BtnStyle(9)))
+                    _renamingCommunity = false;
+                y += 16f;
+                rank++;
+                continue;
+            }
+
+            // For the player's row, a name-sized button is checked BEFORE the full-row focus button
+            // so clicking the name opens rename mode instead of swinging the camera (IMGUI dispatches
+            // overlapping Button hit-tests in call order, so whichever runs first wins the click).
+            if (isPlayer)
+            {
+                Rect nameRect = new Rect(x + 14f, y, w - 62f, 16f);
+                if (GUI.Button(nameRect, "", GUIStyle.none))
+                {
+                    _renamingCommunity = true;
+                    _renameBuffer = CommunityNameRegistry.GetName(cid);
+                    GUI.FocusControl(RenameFieldControlName);
+                }
+            }
+
             if (GUI.Button(rowRect, "", GUIStyle.none))
                 FocusOnCommunity(cid);
 
@@ -484,7 +692,7 @@ public class GameHUD : MonoBehaviour
             else
                 valStr = $"{metric:F0}";
 
-            SmallLabelAt(x + 14f, y, w - 48f, $"{tag} Comm {cid}");
+            SmallLabelAt(x + 14f, y, w - 48f, $"{tag} {CommunityNameRegistry.GetName(cid)}");
             SmallLabelAt(x + w - 42f, y, 42f, valStr);
             y += 16f;
 
@@ -536,6 +744,16 @@ public class GameHUD : MonoBehaviour
         {
             if (locked) _orbitCam?.DisablePlanetLock();
             else        _orbitCam?.EnablePlanetLock();
+        }
+        y += 26f;
+
+        // Era 3 game speed (time-scale-spec §5.1) — cycles through the five presets on click (a
+        // dropdown would need new IMGUI plumbing; a cycling button matches every other Settings
+        // toggle here). Only real-time pacing changes — years-per-tick stays fixed (spec §2).
+        if (GUI.Button(new Rect(x, y, w, 22f),
+                $"Era 3 speed: {Era3Calendar.SpeedLabel(Era3Calendar.Speed)}", BtnStyle(11)))
+        {
+            Era3Calendar.Speed = (Era3Calendar.GameSpeed)(((int)Era3Calendar.Speed + 1) % 5);
         }
         y += 26f;
 
@@ -602,7 +820,9 @@ public class GameHUD : MonoBehaviour
         Vector3 dir = (centroid - center).normalized;
         if (dir == Vector3.zero) dir = Vector3.up;
 
-        _orbitCam.FocusOnDirection(dir, 12f);
+        // Preserve the player's current zoom rather than snapping to a fixed close-in distance —
+        // same fix as Era3HUD's settlement-focus click, for the same reason (jarring, too close).
+        _orbitCam.FocusOnDirection(dir, _orbitCam.distance);
         _orbitCam.EnablePlanetLock();
     }
 

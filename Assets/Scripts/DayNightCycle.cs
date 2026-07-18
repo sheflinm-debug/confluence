@@ -46,6 +46,20 @@ public class DayNightCycle : MonoBehaviour
             sunLight.color = new Color(1f, 0.95f, 0.8f);
         }
 
+        // Override color/intensity with the rolled star's spectral class so an M-dwarf
+        // looks dim red, a G-type looks sun-like, and an F/A star looks bright blue-white.
+        var ss = SolarSystemRuntime.Instance?.SolarSystem;
+        if (ss != null)
+        {
+            // Intensity scales with luminosity; sqrt compression keeps very bright stars
+            // from washing out everything, while dim M-dwarfs read as visually darker.
+            float lumFactor = Mathf.Clamp(Mathf.Sqrt(ss.Star.LuminositySolar), 0.25f, 3.5f);
+            sunLight.intensity = 1.1f * lumFactor;
+            // Blend from the raw star color toward white as luminosity increases
+            // (massive bright stars read as near-white in real observation).
+            sunLight.color = Color.Lerp(ss.Star.Color, new Color(1f, 1f, 1f), Mathf.InverseLerp(0.01f, 100f, ss.Star.LuminositySolar));
+        }
+
         SunDirection = Vector3.up;
     }
 

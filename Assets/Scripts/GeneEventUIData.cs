@@ -48,15 +48,27 @@ public static class GeneEventUIData
             }
         },
 
+        ["SexualDifferentiation"] = new EventUI
+        {
+            TopicIcon = "dna-2",
+            Title     = "Sexual Differentiation",
+            Dilemma   = "Split into separate sexes?",
+            LearnMore = "Differentiation into male and female sexes is the prerequisite for sexual reproduction — it must arise first. Adopters (and their offspring) become 50/50 male/female, but still reproduce asexually until sexual reproduction itself evolves later.",
+            Choices   = new[] {
+                new ChoiceUI { Icon = "venus-mars",  Label = "Differentiate", Hint = "male/female sexes appear" },
+                new ChoiceUI { Icon = "circle-dot",  Label = "Undifferentiated", Hint = "stay isogamous" },
+            }
+        },
+
         ["ReproductiveStrategyShift"] = new EventUI
         {
             TopicIcon = "dna-2",
-            Title     = "Reproductive Strategy",
-            Dilemma   = "Clone alone or share genes?",
-            LearnMore = "Asexual reproduction is fast but accumulates mutations. Sexual reproduction blends traits across mates, creating more variety.",
+            Title     = "Sexual Reproduction",
+            Dilemma   = "Clone alone or blend with a mate?",
+            LearnMore = "Now that the lineage has separate sexes, it can reproduce sexually — blending traits across mates for more variety, at the cost of needing to find a partner. Asexual cloning stays fast but accumulates mutations.",
             Choices   = new[] {
                 new ChoiceUI { Icon = "circle-dot",      Label = "Asexual", Hint = "fast, mutation risk"    },
-                new ChoiceUI { Icon = "heart-handshake", Label = "Sexual",  Hint = "trait mixing, variety"  },
+                new ChoiceUI { Icon = "heart-handshake", Label = "Sexual",  Hint = "trait mixing, needs mate" },
             }
         },
 
@@ -315,18 +327,7 @@ public static class GeneEventUIData
 
         // ── Era 3 Decision Layer (d3_*) ───────────────────────────────────────────
 
-        ["d3_trade_policy"] = new EventUI
-        {
-            TopicIcon = "arrows-exchange",
-            Title     = "Trade Policy",
-            Dilemma   = "Open borders or protect your economy?",
-            LearnMore = "Open Routes maximizes exchange_rate and trade health but exposes you to arbitrage. Embargo severs trade bonds — resilience suffers until alternative channels form.",
-            Choices   = new[] {
-                new ChoiceUI { Icon = "route",      Label = "Open Routes",       Hint = "max exchange, arbitrage risk"     },
-                new ChoiceUI { Icon = "scale",      Label = "Balanced Tariffs",  Hint = "moderate protection"              },
-                new ChoiceUI { Icon = "ban",        Label = "Embargo",           Hint = "isolationist, resilience cost"    },
-            }
-        },
+        // d3_trade_policy entry removed (era3-systems-implementation-spec §4) — its card was deleted.
 
         ["d3_kinship_policy"] = new EventUI
         {
@@ -408,29 +409,62 @@ public static class GeneEventUIData
             }
         },
 
-        ["d3_caste_labor"] = new EventUI
-        {
-            TopicIcon = "users-group",
-            Title     = "Labor Allocation",
-            Dilemma   = "Where does the population's effort go?",
-            LearnMore = "Production focus raises stockpile and economic channel. Military shifts caste/sector to soldiers. Culture focus builds legitimacy and idea patronage.",
-            Choices   = new[] {
-                new ChoiceUI { Icon = "hammer",      Label = "Production",  Hint = "max output, stockpile growth"       },
-                new ChoiceUI { Icon = "sword",       Label = "Military",    Hint = "caste/sector to soldiers"           },
-                new ChoiceUI { Icon = "masks-theater", Label = "Culture",   Hint = "legitimacy, idea investment"        },
-            }
-        },
+        // d3_caste_labor entry removed (era3-systems-implementation-spec §4) — its card was deleted.
 
-        ["d3_large_initiative_1"] = new EventUI
+        // era3-systems-implementation-spec §8: rebuilt as 5 track-specific ids (see Era3HUD.cs).
+        ["d3_large_initiative_commerce"] = new EventUI
         {
             TopicIcon = "trophy",
-            Title     = "Large Initiative",
-            Dilemma   = "Spend the surplus on what?",
-            LearnMore = "Vaccination Drive shores up disease resilience. Trade Expansion opens new exchange routes. Monument investment raises religious legitimacy and belief tier.",
+            Title     = "Large Initiative: Great Public Works",
+            Dilemma   = "Commit to a 30-year public works program?",
+            LearnMore = "Economic output dips 15% while underway; completing it grants a permanent +15% Economic output.",
             Choices   = new[] {
-                new ChoiceUI { Icon = "heart-plus",  Label = "Vaccination",  Hint = "+10% resilience"                  },
-                new ChoiceUI { Icon = "route",       Label = "Trade Expand", Hint = "open routes, higher openness"     },
-                new ChoiceUI { Icon = "building",    Label = "Monument",     Hint = "+religion channel investment"     },
+                new ChoiceUI { Icon = "building",   Label = "Commit",  Hint = "-15% Economic output for 30 years, then +15% permanent" },
+                new ChoiceUI { Icon = "x",          Label = "Not yet", Hint = "no change" },
+            }
+        },
+        ["d3_large_initiative_apex"] = new EventUI
+        {
+            TopicIcon = "trophy",
+            Title     = "Large Initiative: Coordinated Territory Network",
+            Dilemma   = "Commit the pack's territory to a coordinated network?",
+            LearnMore = "Food reserves are taxed while underway; completing it grants a permanent +20% MaxSustainableForce.",
+            Choices   = new[] {
+                new ChoiceUI { Icon = "paw",        Label = "Commit",  Hint = "biomass tax for 30 years, then +20% MaxSustainableForce permanent" },
+                new ChoiceUI { Icon = "x",          Label = "Not yet", Hint = "no change" },
+            }
+        },
+        ["d3_large_initiative_reef"] = new EventUI
+        {
+            TopicIcon = "trophy",
+            Title     = "Large Initiative: Colony Fusion Event",
+            Dilemma   = "Commit to fusing colonial growth into one coordinated event?",
+            LearnMore = "Carrying capacity growth slows 15% while underway; completing it grants a permanent +15% K_effective.",
+            Choices   = new[] {
+                new ChoiceUI { Icon = "circle-dot", Label = "Commit",  Hint = "-15% K_effective growth for 30 years, then +15% permanent" },
+                new ChoiceUI { Icon = "x",          Label = "Not yet", Hint = "no change" },
+            }
+        },
+        ["d3_large_initiative_terraformer"] = new EventUI
+        {
+            TopicIcon = "trophy",
+            Title     = "Large Initiative: Planetary Chemistry Cascade",
+            Dilemma   = "Commit to a planet-scale chemistry cascade?",
+            LearnMore = "Runaway risk accumulates twice as fast while underway; completing it grants a permanent Environment-sector output boost.",
+            Choices   = new[] {
+                new ChoiceUI { Icon = "cloud",      Label = "Commit",  Hint = "2x RunawayExposure accumulation for 30 years, then permanent Environment boost" },
+                new ChoiceUI { Icon = "x",          Label = "Not yet", Hint = "no change" },
+            }
+        },
+        ["d3_large_initiative_bloomfront"] = new EventUI
+        {
+            TopicIcon = "trophy",
+            Title     = "Large Initiative: Mass Synchronized Bloom",
+            Dilemma   = "Commit to a synchronized mass bloom?",
+            LearnMore = "Reproduction slows 20% while underway; completing it grants an immediate biomass surge plus a small permanent K_effective boost.",
+            Choices   = new[] {
+                new ChoiceUI { Icon = "sparkles",   Label = "Commit",  Hint = "-20% PopGrowth for 30 years, then a biomass surge + small permanent boost" },
+                new ChoiceUI { Icon = "x",          Label = "Not yet", Hint = "no change" },
             }
         },
     };

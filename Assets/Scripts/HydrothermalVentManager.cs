@@ -103,6 +103,20 @@ public class HydrothermalVentManager : MonoBehaviour
                   $"deep pool {deep.Count} verts, deepest {deep[0].depth:F3} below sea level).");
     }
 
+    /// World position of the nearest vent. Returns false if no vents placed yet.
+    public bool NearestVent(Vector3 worldPos, out Vector3 ventPos)
+    {
+        ventPos = Vector3.zero;
+        float bestDist = float.MaxValue;
+        bool found = false;
+        foreach (var v in _vents)
+        {
+            float d = Vector3.Distance(worldPos, v.WorldPosition);
+            if (d < bestDist) { bestDist = d; ventPos = v.WorldPosition; found = true; }
+        }
+        return found;
+    }
+
     /// Chemical energy density at worldPos contributed by all vents (0-1).
     /// Falls off quadratically from vent centre, stacks additively up to 1.
     public float GetVentEnergyAt(Vector3 worldPos)

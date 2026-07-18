@@ -78,22 +78,47 @@ public static class OrganismBiochemistryTable
             CompatibleTypes = new[] { "SO2-H2S volcanic" } },
     };
 
-    /// Weighted roll: entries whose CompatibleTypes lists the rolled atmosphere type
-    /// get a large boost (plausible pairing), everything else stays eligible but
-    /// unlikely - so an exotic mismatch (e.g. methanogens on an oxygen world) can
-    /// still occur rarely rather than being hard-excluded.
-    public static BiochemistryDef Roll(AtmosphereTypeDef type)
+    /// Weighted roll informed by actual post-constraint gas composition.
+    /// Entries whose CompatibleTypes matches the atmosphere type get a boost; entries
+    /// whose backbone cannot survive the actual gas mix (per backbone_gas_effects_reference.md)
+    /// are zeroed out entirely. Breathed-gas availability also scales the weight.
+    public static BiochemistryDef Roll(AtmosphereTypeDef type, IReadOnlyList<GasDefinition> gases)
     {
         var weights = new List<(BiochemistryDef def, float w)>();
         foreach (var def in _table)
         {
+            // Start with compatible-type soft bonus
             float w = 1f;
             foreach (var t in def.CompatibleTypes) if (t == type.Name) w = 12f;
+
+            // Hard-zero if any lethal gas for this backbone exceeds its survivable threshold
+            if (!IsViable(def.Backbone, gases))
+            {
+                w = 0f;
+            }
+            else
+            {
+                // Scale by breathed-gas availability (absent = small penalty, abundant = bonus)
+                float breathedFrac = GasFraction(def.BreathedGas, gases);
+                if (breathedFrac >= 0.05f)      w *= 2.0f;   // plentiful
+                else if (breathedFrac >= 0.01f) w *= 1.2f;   // present but sparse
+                else                            w *= 0.5f;   // absent — will be injected at genesis
+            }
+
             weights.Add((def, w));
         }
 
         float total = 0f;
         foreach (var (_, w) in weights) total += w;
+
+        // Fallback: if all weights zeroed (shouldn't happen on normal worlds), allow anything
+        if (total <= 0f)
+        {
+            Debug.LogWarning("[Biochemistry] All candidates zeroed by viability filter — using unweighted fallback.");
+            foreach (var def in _table) weights[weights.FindIndex(x => x.def == def)] = (def, 1f);
+            total = _table.Length;
+        }
+
         float pick = Random.Range(0f, total);
         foreach (var (def, w) in weights)
         {
@@ -101,5 +126,63 @@ public static class OrganismBiochemistryTable
             pick -= w;
         }
         return _table[0];
+    }
+
+    /// Returns false if the backbone cannot survive due to a lethal atmospheric gas
+    /// exceeding its toxicity threshold (backbone_gas_effects_reference.md).
+    private static bool IsViable(BackboneElement backbone, IReadOnlyList<GasDefinition> gases)
+    {
+        switch (backbone)
+        {
+            case BackboneElement.Silicon:
+            case BackboneElement.Germanium:
+            case BackboneElement.Tin:
+                // O2 oxidizes/fossilizes; H2O hydrolyzes Si-Si bonds; Cl2 corrosive
+                if (GasFraction("O2",  gases) > 0.01f) return false;
+                if (GasFraction("H2O", gases) > 0.05f) return false;
+                if (GasFraction("Cl2", gases) > 0.001f) return false;
+                break;
+
+            case BackboneElement.Boron:
+                // Boranes pyrophoric in O2; water destroys boranes
+                if (GasFraction("O2",  gases) > 0.01f) return false;
+                if (GasFraction("H2O", gases) > 0.02f) return false;
+                if (GasFraction("F2",  gases) > 0.001f) return false;
+                if (GasFraction("Cl2", gases) > 0.001f) return false;
+                break;
+
+            case BackboneElement.Phosphorus:
+                // White P pyrophoric in O2; reacts with H2O; halides corrosive
+                if (GasFraction("O2",  gases) > 0.01f) return false;
+                if (GasFraction("H2O", gases) > 0.05f) return false;
+                if (GasFraction("F2",  gases) > 0.001f) return false;
+                if (GasFraction("Cl2", gases) > 0.001f) return false;
+                break;
+
+            case BackboneElement.Carbon:
+                // NH3 corrosive at high conc; halogens destroy organics
+                if (GasFraction("NH3", gases) > 0.20f) return false;
+                if (GasFraction("F2",  gases) > 0.001f) return false;
+                if (GasFraction("Cl2", gases) > 0.001f) return false;
+                break;
+
+            case BackboneElement.Nitrogen:
+                // NO2 / reactive nitrogen oxides lethal; halogens lethal
+                if (GasFraction("NO2", gases) > 0.01f) return false;
+                if (GasFraction("Cl2", gases) > 0.001f) return false;
+                break;
+
+            case BackboneElement.Sulfur:
+                // Cl2 forms toxic sulfur chlorides
+                if (GasFraction("Cl2", gases) > 0.001f) return false;
+                break;
+        }
+        return true;
+    }
+
+    private static float GasFraction(string name, IReadOnlyList<GasDefinition> gases)
+    {
+        foreach (var g in gases) if (g.Name == name) return g.Fraction;
+        return 0f;
     }
 }

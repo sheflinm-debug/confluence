@@ -17,8 +17,13 @@ public class AtmosphereVisual : MonoBehaviour
     public void Build(float planetRadius, Vector3 planetCenter, AtmosphereTypeDef type, float pressureBar, Transform parent)
     {
         gameObject.name = "Atmosphere";
-        transform.SetParent(parent);
-        transform.position = planetCenter;
+        // Parent for scene hierarchy only — DO NOT inherit parent scale.
+        // The mesh is built at world-space shell radius; we reset local scale to (1,1,1)
+        // so that a parent with non-unit scale (e.g. a cinematic planet sphere scaled up)
+        // doesn't blow the atmosphere shell out to inter-planet distances.
+        transform.SetParent(parent, worldPositionStays: false);
+        transform.localPosition = Vector3.zero;
+        transform.localScale    = Vector3.one;
 
         IcosphereGenerator.Build(2, out List<Vector3> unitVerts, out List<int> triangles);
 
@@ -30,6 +35,8 @@ public class AtmosphereVisual : MonoBehaviour
         // at that ratio the shell sits BELOW single-celled-organism height once agents
         // are scaled down to a believable size - 1.15x gives clear visible altitude
         // instead of creatures poking out the top of the sky.
+        // Vertices are in the PARENT's local space — since localScale is (1,1,1) and
+        // localPosition is zero, local space == parent local space at planet center.
         float shellRadius = planetRadius * 1.15f;
         for (int i = 0; i < unitVerts.Count; i++)
         {

@@ -16,6 +16,9 @@ public class CorpseItem : MonoBehaviour
     void Update()
     {
         _age += Time.deltaTime;
+        // Gradually release body mass as dissolved organics so heterotrophs can absorb them.
+        // Scale factor keeps nutrient units consistent with Deplete() amounts.
+        ChemicalNutrientPool.Deposit(transform.position, BodyMass * Time.deltaTime / decayTime * 0.1f);
         if (_age >= decayTime) Destroy(gameObject);
     }
 

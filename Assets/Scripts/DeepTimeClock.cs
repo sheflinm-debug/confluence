@@ -51,7 +51,7 @@ public class DeepTimeClock : MonoBehaviour
 
     private string CurrentCaption()
     {
-        EraPhase phase = EraTimeline.Phases[_phaseIndex];
+        EraPhase phase = EraTimeline.Phases[Mathf.Min(_phaseIndex, EraTimeline.Phases.Length - 1)];
         float t = phase.DurationSeconds > 0f ? Mathf.Clamp01(_phaseT / phase.DurationSeconds) : 1f;
         float yearsAgo = Mathf.Lerp(phase.YearsAgoStart, phase.YearsAgoEnd, t);
         return $"{phase.EraLabel} — {phase.PhaseLabel} — {FormatYearsAgo(yearsAgo)}";
@@ -68,8 +68,17 @@ public class DeepTimeClock : MonoBehaviour
     void OnGUI()
     {
         string caption;
-        if (_running) caption = CurrentCaption();
-        else if (_finished) caption = "Era 2: Age of Intelligence — simulation continues";
+        // The ACTUAL gameplay era wins over the deep-time narration. The caption used to run on its
+        // own timer and then freeze forever on "Era 2: Age of Intelligence", so the player never saw
+        // Era 3 (or even a reliable Era 2) even though the gameplay layer had advanced — the on-screen
+        // label and the real era state were two disconnected clocks. Now, once Era2Manager/Era3Manager
+        // are active, the caption reflects them directly.
+        if (Era3Manager.Instance != null && Era3Manager.Instance.IsActive)
+            caption = "Era 3: The Commerce Engine";
+        else if (Era2Manager.Instance != null && Era2Manager.Instance.IsActive)
+            caption = "Era 2: The Age of Intelligence";
+        else if (_running) caption = CurrentCaption();
+        else if (_finished) caption = CurrentCaption(); // hold on the final deep-time phase; do NOT falsely claim Era 2
         else return;
 
         GUIStyle style = new GUIStyle(GUI.skin.label) { fontSize = 16, alignment = TextAnchor.MiddleCenter };

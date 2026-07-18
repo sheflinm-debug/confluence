@@ -32,7 +32,7 @@ public static class AtmosphereTypeTable
 {
     public static readonly AtmosphereTypeDef[] Table =
     {
-        new AtmosphereTypeDef { Name = "N2-O2 (biotic)", Weight = 8,
+        new AtmosphereTypeDef { Name = "N2-O2 (biotic)", Weight = 11,
             DominantSpecies = new (string,float,float)[] { ("O2",0.10f,0.30f), ("N2",0.70f,0.85f) },
             TempMinK = 250, TempMaxK = 320, TracePool = new[] { "CO2", "Ar", "H2O" },
             PressureMinBar = 0.3f, PressureMaxBar = 3f, RenderVerdict = AtmosphereRenderVerdict.Transparent },
@@ -42,12 +42,12 @@ public static class AtmosphereTypeTable
             TempMinK = 80, TempMaxK = 200, TracePool = new[] { "CO2", "Ar" },
             PressureMinBar = 0.3f, PressureMaxBar = 3f, RenderVerdict = AtmosphereRenderVerdict.Opaque },
 
-        new AtmosphereTypeDef { Name = "CO2-dominant (Venus/Mars-type)", Weight = 14,
+        new AtmosphereTypeDef { Name = "CO2-dominant (Venus/Mars-type)", Weight = 9,
             DominantSpecies = new (string,float,float)[] { ("CO2",0.90f,0.97f), ("N2",0.02f,0.08f) },
             TempMinK = 180, TempMaxK = 750, TracePool = new[] { "SO2", "Ar", "H2O" },
             PressureMinBar = 0.006f, PressureMaxBar = 90f, RenderVerdict = AtmosphereRenderVerdict.BranchOnPressure, OpaquePressureThreshold = 1.5f },
 
-        new AtmosphereTypeDef { Name = "Steam / supercritical H2O", Weight = 6,
+        new AtmosphereTypeDef { Name = "Steam / supercritical H2O", Weight = 8,
             DominantSpecies = new (string,float,float)[] { ("H2O",0.50f,0.99f), ("CO2",0.01f,0.30f) },
             TempMinK = 650, TempMaxK = 1500, TracePool = new[] { "N2" },
             PressureMinBar = 10f, PressureMaxBar = 300f, RenderVerdict = AtmosphereRenderVerdict.Opaque },
@@ -62,12 +62,12 @@ public static class AtmosphereTypeTable
             TempMinK = 200, TempMaxK = 500, TracePool = new[] { "CO2", "N2" },
             PressureMinBar = 0.01f, PressureMaxBar = 5f, RenderVerdict = AtmosphereRenderVerdict.Translucent },
 
-        new AtmosphereTypeDef { Name = "CH4-N2 reducing", Weight = 7,
+        new AtmosphereTypeDef { Name = "CH4-N2 reducing", Weight = 9,
             DominantSpecies = new (string,float,float)[] { ("N2",0.50f,0.90f), ("CH4",0.10f,0.50f) },
             TempMinK = 60, TempMaxK = 110, TracePool = new[] { "H2" },
             PressureMinBar = 0.3f, PressureMaxBar = 3f, RenderVerdict = AtmosphereRenderVerdict.Translucent },
 
-        new AtmosphereTypeDef { Name = "Carbon-rich (CO/CO2 reducing)", Weight = 4,
+        new AtmosphereTypeDef { Name = "Carbon-rich (CO/CO2 reducing)", Weight = 6,
             DominantSpecies = new (string,float,float)[] { ("CO2",0.30f,0.70f), ("H2S",0.05f,0.20f) },
             TempMinK = 300, TempMaxK = 900, TracePool = new[] { "CH4" },
             PressureMinBar = 0.1f, PressureMaxBar = 10f, RenderVerdict = AtmosphereRenderVerdict.Translucent },
@@ -77,7 +77,7 @@ public static class AtmosphereTypeTable
             TempMinK = 100, TempMaxK = 700, TracePool = new[] { "O2" },
             PressureMinBar = 0.000001f, PressureMaxBar = 0.0001f, RenderVerdict = AtmosphereRenderVerdict.Transparent },
 
-        new AtmosphereTypeDef { Name = "Abiotic-O2 false-positive", Weight = 3,
+        new AtmosphereTypeDef { Name = "Abiotic-O2 false-positive", Weight = 5,
             DominantSpecies = new (string,float,float)[] { ("O2",0.05f,0.40f), ("CO2",0.05f,0.20f) },
             TempMinK = 260, TempMaxK = 380, TracePool = new[] { "N2", "H2O" },
             PressureMinBar = 0.3f, PressureMaxBar = 2f, RenderVerdict = AtmosphereRenderVerdict.Transparent },

@@ -36,21 +36,19 @@ public class EraPostProcessManager : MonoBehaviour
     {
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
+
+        // Initialize immediately in Awake so public hooks are safe to call
+        // in the same frame that AddComponent runs (SimulationBootstrap pattern).
+        BuildProfiles();
+        SetupVolumes();
+        _base.profile = _introProfile;
+        _base.weight  = 1f;
+        _blend.weight = 0f;
     }
 
     void OnDestroy()
     {
         if (Instance == this) Instance = null;
-    }
-
-    void Start()
-    {
-        BuildProfiles();
-        SetupVolumes();
-        // Begin with the intro profile active at full weight.
-        _base.profile = _introProfile;
-        _base.weight  = 1f;
-        _blend.weight = 0f;
     }
 
     // ── Public era hooks ────────────────────────────────────────────────────────

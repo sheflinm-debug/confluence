@@ -56,6 +56,7 @@ public class OrbitCamera : MonoBehaviour
             float scroll = mouse.scroll.ReadValue().y;
             // Suppress zoom when the cursor is over a UI panel (HUD, pause menu, etc.)
             bool uiBlocking = GameHUD.IsScrollBlockedAtScreenPos(mouse.position.ReadValue())
+                           || Era3HUD.IsScrollBlockedAtScreenPos(mouse.position.ReadValue())
                            || PauseMenuManager.IsOpen;
             if (scroll != 0f && !uiBlocking)
                 distance -= scroll * scrollSpeed * Time.deltaTime;
@@ -99,7 +100,15 @@ public class OrbitCamera : MonoBehaviour
     public void FocusOnDirection(Vector3 worldDir, float zoomDistance = 15f)
     {
         Vector3 d = worldDir.normalized;
-        _pitch = Mathf.Asin(Mathf.Clamp(d.y, -1f, 1f)) * Mathf.Rad2Deg;
+        // Quaternion.Euler(pitch,yaw,0) * Vector3.forward works out to
+        // (sin(yaw)*cos(pitch), -sin(pitch), cos(yaw)*cos(pitch)) under Unity's rotation convention —
+        // the Y component comes out NEGATED relative to the pitch that was fed in. That silent sign
+        // flip is why a focus-click could land the camera looking at roughly the right longitude but
+        // the wrong hemisphere (mirrored across the equator): _pitch was set to asin(d.y), but
+        // Reposition()'s rot*forward then reconstructed asin(-d.y). Negating here makes rot*forward
+        // reconstruct d exactly (x/z are unaffected — they only depend on cos(pitch)=sqrt(1-d.y^2),
+        // which is sign-invariant).
+        _pitch = -Mathf.Asin(Mathf.Clamp(d.y, -1f, 1f)) * Mathf.Rad2Deg;
         _yaw   = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
         distance = zoomDistance;
         Reposition();
@@ -112,7 +121,12 @@ public class OrbitCamera : MonoBehaviour
     {
         if (target == null) return;
         Quaternion rot = Quaternion.Euler(_pitch, _yaw, 0f);
-        Vector3 pos = target.position + rot * new Vector3(0f, 0f, -distance);
+        // rot * Vector3.forward reconstructs the SAME direction _pitch/_yaw were derived from (see
+        // FocusOnDirection). The camera must sit OUTWARD along that direction (so the focused point
+        // sits between camera and target, facing the camera) — using -distance here placed it on the
+        // opposite side of the target instead, which is why focus-clicking a settlement swung the
+        // camera to the planet's far side rather than centering the actual target.
+        Vector3 pos = target.position + rot * new Vector3(0f, 0f, distance);
         transform.position = pos;
         transform.LookAt(target.position);
     }

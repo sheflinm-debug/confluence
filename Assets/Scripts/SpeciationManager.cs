@@ -39,8 +39,12 @@ public class SpeciationManager : MonoBehaviour
     // Real-time seconds between auto-speciation events for the same lineage.
     [Header("Rate limiter")]
     [Tooltip("Minimum real-time seconds between two speciation events for the same lineage. " +
-             "60s = one branch per minute per lineage at most, regardless of time compression.")]
-    public float minSecondsBetweenSplits = 60f;
+             "120s = one branch per two minutes per lineage at most, regardless of time compression.")]
+    public float minSecondsBetweenSplits = 120f;
+
+    [Tooltip("Minimum living members a lineage must have before it can branch. " +
+             "Prevents 1-member communities from speciation-chaining before they can reproduce.")]
+    public int minMembersToSpeciate = 2;
 
     // Cap on the effective kyr-per-frame used in the SI roll so extreme geological
     // time-compression (Minimal-Replicator Seas ≈ 8000 kyr/sec) doesn't make speciation
@@ -53,6 +57,13 @@ public class SpeciationManager : MonoBehaviour
     // Tracks the last real time (Time.time) each lineage split, for cooldown enforcement.
     private readonly Dictionary<string, float> _lastSpeciationTime = new Dictionary<string, float>();
 
+    // Diagnostic-log interval (real seconds). Periodic per-lineage SI dump so the gap between
+    // accumulated SI and the effective firing probability is observable in logs, not just the
+    // rare moments FireSpeciation actually succeeds (spec: population-speciation-gene-ordering fix §2.1).
+    [Header("Diagnostics")]
+    public float siLogIntervalSeconds = 15f;
+    private float _siLogTimer;
+
     // Monotonically-increasing community ID counter. Community 0 = player's founding
     // lineage. Each speciation event branches a new community from an existing one.
     private int _nextCommunityId = 1;
@@ -63,8 +74,15 @@ public class SpeciationManager : MonoBehaviour
     private string _eraLabel = "—";
     public float MaxSI => _maxSIThisFrame;
     public string EraLabel => _eraLabel;
+    /// Living species this frame (distinct AtmoLineage names among active agents).
     public int SpeciesCount => _speciesCount;
+    /// Total species ever observed (monotonically increasing).
+    public int HistoricalSpeciesCount => _historicalSpeciesCount;
+    /// Species that existed at some point but have no living members now.
+    public int ExtinctSpeciesCount => _historicalSpeciesCount - _speciesCount;
     private int _speciesCount = 1;
+    private int _historicalSpeciesCount = 1;
+    private readonly HashSet<string> _seenLineages = new HashSet<string>();
 
     // -------------------------------------------------------------------------
     // Public API
@@ -138,6 +156,8 @@ public class SpeciationManager : MonoBehaviour
         }
 
         _speciesCount = lineages.Count;
+        foreach (var name in lineages.Keys)
+            if (_seenLineages.Add(name)) _historicalSpeciesCount++;
         _eraLabel = GetEraLabel();
         _maxSIThisFrame = 0f;
         _dominantLineage = "—";
@@ -160,6 +180,10 @@ public class SpeciationManager : MonoBehaviour
 
         float dtKyr = compressionKyrPerSec * Time.deltaTime;
 
+        _siLogTimer += Time.deltaTime;
+        bool emitSiLog = _siLogTimer >= siLogIntervalSeconds;
+        if (emitSiLog) _siLogTimer = 0f;
+
         foreach (var kvp in lineages)
         {
             List<AgentController> members = kvp.Value;
@@ -169,7 +193,13 @@ public class SpeciationManager : MonoBehaviour
                 0.7f + 0.3f * Mathf.Log10(Mathf.Max(1, lineagePop)) / Mathf.Log10(Mathf.Max(2f, populationCap)),
                 0.7f, 1.3f);
 
-            float si = baseRate * fragmentation * diversitySaturation * _climateVolatility * ecoPressure * populationFactor;
+            // Fragmentation now varies per lineage with real spatial dispersion (allopatric driver),
+            // taking the stronger of that and any active isolation-event boost. This lets stable,
+            // geographically-spread lineages accumulate SI without a climate crisis.
+            float spatialFrag = ComputeSpatialFragmentation(members);
+            float lineageFrag = Mathf.Max(fragmentation, spatialFrag);
+
+            float si = baseRate * lineageFrag * diversitySaturation * _climateVolatility * ecoPressure * populationFactor;
 
             if (si > _maxSIThisFrame)
             {
@@ -185,6 +215,35 @@ public class SpeciationManager : MonoBehaviour
             // Roll: random() < SI × tick_length_in_kyr, capped so large time-compression
             // ratios don't make speciation a near-certainty every cooldown expiry.
             float rollDt = Mathf.Min(dtKyr, maxDtKyrPerRoll);
+
+            // Periodic diagnostic (spec §2.1): shows accumulated-SI-vs-effective-probability gap
+            // for every lineage every siLogIntervalSeconds, not just the rare successful rolls —
+            // makes it possible to tell whether SI is genuinely low or the roll window is too rare.
+            if (emitSiLog)
+            {
+                float pFire = si * rollDt;
+                float cooldownRemaining = Mathf.Max(0f, minSecondsBetweenSplits - (Time.time - lastFired));
+
+                // Priority 5: limitingFactor = whichever input contributes least relative to its own
+                // potential range, i.e. the one holding SI down. Turns "why isn't this community
+                // speciating" into a direct read instead of a formula-reconstruction exercise.
+                float fragN = lineageFrag / 3f, divN = diversitySaturation, popN = populationFactor / 1.3f,
+                      ecoN = ecoPressure / 1.35f, climN = _climateVolatility / 2.5f;
+                string limiting = "frag"; float lo = fragN;
+                if (divN  < lo) { lo = divN;  limiting = "divSat";    }
+                if (popN  < lo) { lo = popN;  limiting = "popFactor"; }
+                if (ecoN  < lo) { lo = ecoN;  limiting = "eco";       }
+                if (climN < lo) { lo = climN; limiting = "climate";   }
+
+                Debug.Log($"[SpeciationManager] community={kvp.Key} pop={lineagePop} SI={si:G4} " +
+                          $"pFireThisRoll={pFire:G4} rollDtKyr={rollDt:F3} cooldownRemaining={cooldownRemaining:F0}s " +
+                          $"frag={lineageFrag:F2}(spatial={spatialFrag:F2}) divSat={diversitySaturation:F2} popFactor={populationFactor:F2} " +
+                          $"eco={ecoPressure:F2} climate={_climateVolatility:F2} limitingFactor={limiting}");
+            }
+
+            // Require minimum viable population before branching.
+            if (lineagePop < minMembersToSpeciate) continue;
+
             if (cooledDown && Random.value < si * rollDt)
             {
                 _lastSpeciationTime[kvp.Key] = Time.time;
@@ -222,9 +281,9 @@ public class SpeciationManager : MonoBehaviour
             parent.transform.position, tangent, 1.5f,
             _agentSpawner.planetCenter, _agentSpawner.planetRadius);
 
-        // Don't branch if the era population cap is already full.
-        if (EraManager.Instance != null &&
-            _agentSpawner.ActiveAgents.Count >= EraManager.Instance.MaxPopulation) return;
+        // Technical safety valve only — see AgentController.TryReproduce for rationale. Speciation
+        // spawns one new individual, same accounting as ordinary reproduction.
+        if (_agentSpawner.ActiveAgents.Count >= AgentSpawner.MaxIndividualAgents) return;
 
         int newCommunityId = _nextCommunityId++;
         AgentController child = _agentSpawner.SpawnAgent(
@@ -233,6 +292,7 @@ public class SpeciationManager : MonoBehaviour
         child.InheritGenesFrom(parent);
         child.TriggerSpeciation(newLineageName, newColor);
         AudioManager.Instance?.OnSpeciation();
+        GameLog.LogGlobal($"Speciation: '{parent.AtmoLineage}' → '{newLineageName}' (community {newCommunityId})");
 
         Debug.Log($"[SpeciationManager] '{parent.AtmoLineage}' branched → '{newLineageName}' (community {newCommunityId}) | SI={_maxSIThisFrame:G4} era={_eraLabel} species={_speciesCount + 1}");
     }
@@ -244,6 +304,35 @@ public class SpeciationManager : MonoBehaviour
         foreach (var evt in _isolationEvents)
             if (evt.Multiplier > best) best = evt.Multiplier;
         return best;
+    }
+
+    /// Per-lineage geographic fragmentation from the actual spatial dispersion of a lineage's
+    /// members across the sphere. This is the primary real driver of allopatric/peripatric
+    /// speciation: a lineage whose members have drifted into widely separated clusters is
+    /// diverging in isolation and should accumulate speciation pressure even in stable, calm
+    /// conditions — WITHOUT needing a climate crisis. Previously fragmentation only ever moved
+    /// via explicit isolation events (which nothing triggers in normal play), so it sat pinned
+    /// at 1.00 for entire runs and speciation was effectively climate-crisis-only.
+    ///
+    /// Returns 1.0 for a tightly-clustered lineage, rising toward ~3.0 as members spread across
+    /// the globe. Uses circular-variance (1 − mean resultant length) of member directions.
+    private float ComputeSpatialFragmentation(List<AgentController> members)
+    {
+        if (_agentSpawner == null || members.Count < 3) return 1f;
+        Vector3 c = _agentSpawner.planetCenter;
+
+        Vector3 mean = Vector3.zero;
+        int n = 0;
+        foreach (var m in members)
+        {
+            if (m == null) continue;
+            mean += (m.transform.position - c).normalized;
+            n++;
+        }
+        if (n < 3) return 1f;
+        float R = mean.magnitude / n;             // 1 = all same direction (clustered), →0 = dispersed
+        float dispersion = 1f - Mathf.Clamp01(R); // 0 clustered → 1 spread across the globe
+        return Mathf.Lerp(1f, 3f, dispersion);
     }
 
     /// Kiloyears of sim-time per real second for the currently-active EraTimeline phase.
@@ -270,15 +359,20 @@ public class SpeciationManager : MonoBehaviour
     }
 
     /// BaseRate(era) per speciation_spec.md §2.1.
+    /// Non-crisis floor raised ~5× (0.00001→0.00005 default, 0.00005→0.0002 Compartmentalized)
+    /// so that ordinary spatial-fragmentation-driven divergence produces speciation during stable
+    /// periods, not only when ClimateVolatility spikes at era transitions. Previously the default
+    /// rate was so far below the climate multiplier's reach that branch events were effectively
+    /// crisis-only. These remain TUNABLE — calibrate against per-lineage SI diagnostic output.
     private float GetBaseRate()
     {
-        if (DeepTimeClock.Instance == null) return 0.00001f;
+        if (DeepTimeClock.Instance == null) return 0.00005f;
         int idx = DeepTimeClock.Instance.CurrentPhaseIndex;
-        if (idx >= EraTimeline.Phases.Length) return 0.00001f;
+        if (idx >= EraTimeline.Phases.Length) return 0.00005f;
         string label = EraTimeline.Phases[idx].PhaseLabel;
         if (label.Contains("Morphological Complexity") || label.Contains("Multicellularity")) return 0.0005f;
-        if (label.Contains("Compartmentalized")) return 0.00005f;
-        return 0.00001f;
+        if (label.Contains("Compartmentalized")) return 0.0002f;
+        return 0.00005f;
     }
 
     private string GetEraLabel()

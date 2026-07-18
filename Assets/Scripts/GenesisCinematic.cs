@@ -51,6 +51,9 @@ public class GenesisCinematic : MonoBehaviour
     private float _seaLevel;
     private float _elevationWorldScale;
 
+    private bool _skipRequested;
+    private bool _completed;
+
     /// Exposed so SimulationBootstrap can hand the baked liquid shell off to
     /// TidalForceManager once the cinematic completes - tidal bulging is a post-genesis
     /// runtime effect layered on top of this already-built mesh, not part of the reveal.
@@ -78,14 +81,19 @@ public class GenesisCinematic : MonoBehaviour
     private Camera _cam;
     private System.Action _onComplete;
     private float _planetRadius;
+    private AtmosphereTypeDef _atmoType;
+    private float _atmoPresureBar;
 
     public void Run(
         Vector3 center, float planetRadius, TectonicResult tectonics, RockArchetypeDef archetype,
         LiquidDef liquid, float seaLevel, float liquidTempK, float elevationWorldScale,
-        SolarSystemDef solarSystem, Transform parent, System.Action onComplete)
+        SolarSystemDef solarSystem, Transform parent, System.Action onComplete,
+        AtmosphereTypeDef atmoType = null, float pressureBar = 1f)
     {
         _onComplete = onComplete;
         _planetRadius = planetRadius;
+        _atmoType = atmoType;
+        _atmoPresureBar = pressureBar;
         _seaLevel = seaLevel;
         _elevationWorldScale = elevationWorldScale;
 
@@ -673,6 +681,17 @@ public class GenesisCinematic : MonoBehaviour
 
     private IEnumerator PhaseTopographyReveal(Vector3 center, float planetRadius)
     {
+        // Build atmosphere dome now so the terrain reveal shows the correct atmosphere-tinted
+        // colors matching what the player will see in gameplay. Parented to _lifePlanetGo so
+        // it scales with the planet: intro-scale during cinematic, game-scale after _onComplete
+        // snaps LifePlanetGo to Vector3.one (the Bootstrap no longer builds a separate dome).
+        if (_atmoType != null && _lifePlanetGo != null)
+        {
+            GameObject atmGo = new GameObject("AtmosphereVisual");
+            AtmosphereVisual atmV = atmGo.AddComponent<AtmosphereVisual>();
+            atmV.Build(_planetRadius, center, _atmoType, _atmoPresureBar, _lifePlanetGo.transform);
+        }
+
         float duration = EraTimeline.Phases[EraTimeline.AbioticStartIndex + 3].DurationSeconds;
         Vector3 startPos = _cam.transform.position;
         // Use IntroDisplayRadius not planetRadius — planet is still at intro scale here.
@@ -707,6 +726,57 @@ public class GenesisCinematic : MonoBehaviour
     // SimulationBootstrap spawns the real agents.
     //
     // Planet is still at IntroDisplayRadius scale here (not full gameplay scale).
+
+    private void OnGUI()
+    {
+        if (_completed) return;
+        bool isSinglePlayer = NetworkGameManager.Instance == null ||
+                              NetworkGameManager.Instance.CurrentRole == NetworkGameManager.Role.None;
+        if (!isSinglePlayer) return;
+
+        float btnW = 130f, btnH = 36f, pad = 12f;
+        Rect r = new Rect(Screen.width - btnW - pad, pad, btnW, btnH);
+        if (GUI.Button(r, "Skip Intro"))
+            SkipToCompletion();
+    }
+
+    private void SkipToCompletion()
+    {
+        if (_completed) return;
+        _completed = true;
+        _skipRequested = true;
+        StopAllCoroutines();
+
+        // Jump the timeline clock straight to Era 1 so the label and EraManager
+        // both see the right phase immediately without running through the cinematic phases.
+        if (DeepTimeClock.Instance != null)
+            DeepTimeClock.Instance.StartFrom(EraTimeline.Era1StartIndex);
+
+        // Snap planet to final terrain mesh.
+        if (_lifePlanetMesh != null && _terrainOnly.Vertices != null)
+        {
+            _lifePlanetMesh.vertices = _terrainOnly.Vertices;
+            _lifePlanetMesh.colors   = _terrainOnly.Colors;
+            _lifePlanetMesh.triangles = _terrainOnly.Triangles;
+            _lifePlanetMesh.RecalculateNormals();
+        }
+
+        if (_lifePlanetGo != null)
+            _lifePlanetGo.transform.localScale = Vector3.one;
+
+        if (_liquidGo != null && _hasLiquid)
+        {
+            _liquidGo.SetActive(true);
+            MeshRenderer lr = _liquidGo.GetComponent<MeshRenderer>();
+            if (lr != null)
+            {
+                Color c = lr.material.color;
+                lr.material.color = new Color(c.r, c.g, c.b, 1f);
+            }
+        }
+
+        _onComplete?.Invoke();
+    }
 
     /// Brief camera orbit over the planet surface. Calls _onComplete after, which triggers
     /// SimulationBootstrap to spawn the real game agents — so no fake cells are needed.

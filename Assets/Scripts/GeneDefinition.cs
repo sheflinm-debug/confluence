@@ -8,6 +8,14 @@ public class GeneChoice
     /// Optional: if set, the choice is hidden from the popup when this returns false.
     /// Lets gene events filter options by morphology (e.g. no Visual option without vision).
     public Func<AgentController, bool> IsAvailable;
+
+    /// Optional: if set, autonomous fitness-driven paths (NPC DefaultAutoApply, per-reproduction
+    /// mutation origination) will not pick this choice unless it returns true — an informed PLAYER
+    /// can still pick it via the popup regardless (IsAvailable, not this, controls popup visibility).
+    /// Use for choices that are only an actual fitness win under certain world conditions (e.g.
+    /// photosynthesis is only viable where there's enough light) so evolution doesn't autonomously
+    /// commit a lineage to a losing strategy.
+    public Func<AgentController, bool> FitnessGate;
 }
 
 /// Data-driven description of a single Section 6b gene event. Adding a new gene means
@@ -36,4 +44,13 @@ public class GeneDefinition
     /// True for Era 1 gene events. When Era 2 is active, player-community agents get
     /// DefaultAutoApply instead of a choice popup so Era 1 prompts don't bleed into Era 2.
     public bool IsEra1Event;
+
+    /// Per-reproduction origination probability (appearance/gene-adoption spec §B). When > 0, an
+    /// NPC offspring that meets this gene's prerequisites and eligibility has this per-birth chance
+    /// to ORIGINATE the trait in itself — a single individual, not a synchronized population-wide
+    /// flip — after which it spreads through the lineage by ordinary inheritance and differential
+    /// fitness. This is additive to the existing eligibility system (a safety net remains), so it
+    /// only ever makes adoption more per-lineage/staggered, never blocks a gene from appearing.
+    /// 0 = disabled (only the existing eligibility path applies). TUNABLE per gene.
+    public float BaseMutationProbability = 0f;
 }

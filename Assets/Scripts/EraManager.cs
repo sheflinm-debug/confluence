@@ -23,7 +23,7 @@ public class EraManager : MonoBehaviour
     // Abiogenesis: sparse (15). Minimal-Replicator Seas: full microbial ocean (120).
     // Great Gas Event: die-off from oxidizer toxicity (70).
     // Compartmentalized Cells → Multicellularity: gradual recovery. Morphological Complexity Threshold: explosion to hard cap.
-    private static readonly int[]   MaxPopPerEra         = {    15,   120,    70,   120,   200,   350  };
+    private static readonly int[]   MaxPopPerEra         = {   100,   200,   120,   200,   350,   500  };
     // Fraction of an agent's computed moveSpeed that's actually used.
     // Primordial microbes are sluggish; locomotion genes unlock speed over time.
     // Agents poll this in Update so era transitions take effect on all live agents.
@@ -44,8 +44,16 @@ public class EraManager : MonoBehaviour
     /// Visual scale all agents should be at in the current era.
     public float AgentTargetScale => CurrentEra >= 0 ? AgentScalePerEra[CurrentEra] : AgentScalePerEra[0];
 
-    /// Hard population cap for the current era.
+    /// Balance-tuning reference population for the current sub-phase (resource scaling / UI display
+    /// only — NOT a hard reproduction cap; see AgentSpawner.MaxIndividualAgents for the actual
+    /// technical safety valve).
     public int MaxPopulation => CurrentEra >= 0 ? MaxPopPerEra[CurrentEra] : MaxPopPerEra[0];
+
+    /// Human-readable name of the current Era 1 sub-phase (e.g. "Morphological Complexity
+    /// Threshold") — NOT a top-level era identity. All six CurrentEra indices (0-5) are sub-phases
+    /// WITHIN the game's single biological Era 1; the real Era 2 (Age of Intelligence, Era2Manager)
+    /// and Era 3 (Era3Manager) are separate, later top-level stages that come after this one ends.
+    public string CurrentEraName => EraNames[Mathf.Clamp(CurrentEra, 0, EraNames.Length - 1)];
 
     /// Fraction of computed moveSpeed that's active in the current era (0–1).
     public float MoveSpeedMultiplier => CurrentEra >= 0 ? MoveSpeedMultPerEra[CurrentEra] : MoveSpeedMultPerEra[0];
@@ -88,7 +96,9 @@ public class EraManager : MonoBehaviour
         // Only start tracking once we're actually in Era 1.
         if (phaseIdx < EraTimeline.Era1StartIndex) return;
 
-        if (newEra != CurrentEra)
+        // Only ever advance forward. `!=` would let a lagging DeepTimeClock pull CurrentEra back down
+        // after a debug era-skip forces it high; eras never regress, so forward-only is also correct.
+        if (newEra > CurrentEra)
         {
             CurrentEra = newEra;
             OnEraTransition(newEra);
@@ -116,6 +126,14 @@ public class EraManager : MonoBehaviour
                 if (Era2Manager.Instance != null) Era2Manager.Instance.BeginEra2();
             }
         }
+    }
+
+    /// DEBUG: jump the biological sub-phase straight to the final one (Morphological Complexity),
+    /// so era-gated genes/scale are Era-1-mature before a skip. Forward-only; no-op if already there.
+    public void DebugForceFinalSubPhase()
+    {
+        int last = EraNames.Length - 1;
+        if (last > CurrentEra) { CurrentEra = last; OnEraTransition(last); }
     }
 
     private void OnEraTransition(int era)
@@ -149,6 +167,8 @@ public class EraManager : MonoBehaviour
         }
 
         Debug.Log($"[EraManager] Era transition → {EraNames[era]} (era {era}), agentScale={AgentScalePerEra[era]:F2}, maxPop={MaxPopPerEra[era]}");
+        GameLog.LogGlobal($"Era1 sub-phase → {EraNames[era]} (era {era}, maxPop={MaxPopPerEra[era]})");
+        GameLog.Snapshot(_spawner);
 
         // When Morphological Complexity Threshold begins, open the biology-gate window. Era 2
         // fires as soon as the player's lineage resolves all three AND-gate events (KingdomFork

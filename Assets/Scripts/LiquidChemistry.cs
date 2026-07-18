@@ -128,11 +128,14 @@ public static class LiquidChemistry
         "N2-O2 (biotic)"                  => Water,
         "Abiotic-O2 false-positive"        => Water,
         "CO2-dominant (Venus/Mars-type)"   => Water,
+        "N2 (Titan-thin)"                  => Water,       // thin N2 → water at HZ temps
+        "H2-He (primordial)"               => Water,       // hydrogen primordial → water
+        "NH3-rich (reducing)"              => Ammonia,     // ammonia atmosphere → ammonia ocean
         "N2-CO2 (Titan-thick)"             => Hydrocarbon,
         "CH4-N2 reducing"                  => Hydrocarbon,
         "Carbon-rich (CO/CO2 reducing)"    => Hydrocarbon,
         "SO2-H2S volcanic"                 => MoltenSulfur,
-        _                                  => null,
+        _                                  => Water,       // safe default: life planet always has a candidate
     };
 
     /// Final check: does the candidate liquid's stable range actually contain the
@@ -154,19 +157,22 @@ public static class LiquidChemistry
     /// At extreme vacuum (pressureBar <= 0.001) nothing can remain liquid; returns null.
     public static LiquidDef BestForTemperature(float planetTempK, float pressureBar = 1f)
     {
-        if (pressureBar <= 0.001f) return null;
+        // Use 1 bar as a floor for the phase-stability check — the life planet always has
+        // surface liquid (it's inside the HZ by construction), so an extreme-vacuum roll
+        // should not cascade into a dry world with no medium for early life.
+        float effectivePressure = Mathf.Max(pressureBar, 1f);
         LiquidDef[] candidates = { Water, Hydrocarbon, Ammonia, MoltenSulfur };
         LiquidDef best = null;
         float bestDist = float.MaxValue;
         foreach (var ld in candidates)
         {
-            float boilingK = ld.BoilingPointAtPressureK(pressureBar);
+            float boilingK = ld.BoilingPointAtPressureK(effectivePressure);
             if (planetTempK >= ld.MinK && planetTempK <= boilingK)
                 return ld; // exact match — return immediately
             float mid = (ld.MinK + boilingK) * 0.5f;
             float dist = Mathf.Abs(planetTempK - mid);
             if (dist < bestDist) { bestDist = dist; best = ld; }
         }
-        return best;
+        return best ?? Water; // absolute fallback — life planet must have liquid
     }
 }

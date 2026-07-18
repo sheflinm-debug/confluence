@@ -56,12 +56,27 @@ public static class ChemicalNutrientPool
         _density[i] = Mathf.Max(0f, _density[i] - amount);
     }
 
+    /// Add nutrients at worldPos (decomposing biomass releases organics into the local pool).
+    public static void Deposit(Vector3 worldPos, float amount)
+    {
+        if (_density == null) return;
+        int i = NearestVertex(worldPos);
+        _density[i] = Mathf.Min(1f, _density[i] + amount);
+    }
+
     /// Slow replenishment: geothermal input + atmospheric dissolution. Call from a manager each frame.
+    /// Rate scales with era population demand (agentScale^0.75 * maxPop relative to Era 0 baseline)
+    /// so the pool doesn't collapse as organisms grow larger and more numerous each era.
     public static void Replenish(float dt)
     {
         if (_density == null) return;
-        // Very slow recovery — nutrients are genuinely limited in early oceans.
-        float rate = 0.0015f * dt;
+        float agentScale = EraManager.Instance != null ? EraManager.Instance.AgentTargetScale : 0.05f;
+        float maxPop     = EraManager.Instance != null ? EraManager.Instance.MaxPopulation    : 100f;
+        // Era 0 baseline: 100 agents at scale 0.05 → demandLoad = 100 * 0.05^0.75 ≈ 13.07
+        const float era0DemandLoad = 13.07f;
+        float eraDemandLoad = maxPop * Mathf.Pow(agentScale, 0.75f);
+        float eraScale = Mathf.Max(eraDemandLoad / era0DemandLoad, 1f);
+        float rate = 0.0015f * eraScale * dt;
         for (int i = 0; i < _density.Length; i++)
             _density[i] = Mathf.Min(1f, _density[i] + rate);
     }

@@ -444,7 +444,7 @@ MonoBehaviour:
   tidalStrengthScale: 0.06
   tidalRebuildIntervalSeconds: 0.25
   starTidalRelativeStrength: 0.45
-  communityCount: 7
+  communityCount: 8
   minMembersPerCommunity: 5
   maxMembersPerCommunity: 10
   preferenceVariance: 8

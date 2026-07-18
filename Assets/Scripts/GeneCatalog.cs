@@ -1,26 +1,47 @@
 using UnityEngine;
 
-/// Builds the default Section 6b gene set (see design spec Section 14e's dependency
-/// table). Nucleus and Multicellularity are pre-seeded directly on each agent at spawn
-/// (AgentController.Init) rather than registered here, since they're assumed to have
-/// already occurred before this simulation begins.
+/// Builds the default Section 6b gene set (see design spec Section 14e's dependency table).
 public static class GeneCatalog
 {
     public static void BuildDefault()
     {
         GeneEvolutionManager.ResetCatalog();
+        CommunityNameRegistry.Reset();
+
+        // Nucleus and Multicellularity fire automatically (no player choice) early in
+        // Era 1 — they are prerequisites for every subsequent gene event.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "Nucleus",
+            IsEra1Event = true,
+            IsEligible = agent => GeneEvolutionManager.SessionElapsed >= 3f,
+            AutoApply = agent => { }
+        });
+
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "Multicellularity",
+            Prerequisites = new[] { "Nucleus" },
+            IsEra1Event = true,
+            IsEligible = agent => GeneEvolutionManager.SessionElapsed >= 8f,
+            AutoApply = agent => { }
+        });
 
         GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "SensoryOrganDevelopment",
-            Prerequisites = new[] { "Multicellularity" },
+            // Gated on motility, not just Multicellularity: sensory organs are only selectively
+            // useful once directed movement exists to act on sensory input — an undifferentiated
+            // sessile cell gains nothing from vision it can't move in response to.
+            Prerequisites = new[] { "MotilityEmergence" },
             IsEra1Event = true,
             // Whether to express: ResourceScarcity drives pre-predation sensing (find patchy food);
             // PredationPressure drives post-KingdomFork sensing (detect threats). Eat-count is the
             // origination floor — always available at low probability regardless of pressure.
             IsEligible = agent => (agent.LifetimeEats >= agent.sensoryGeneEatThreshold
                 || (!agent.AcquiredGenes.Contains("KingdomFork") && agent.ResourceScarcity >= 0.55f)
-                || (agent.AcquiredGenes.Contains("KingdomFork") && agent.PredationPressure >= 0.25f))
+                || (agent.AcquiredGenes.Contains("KingdomFork") && agent.PredationPressure >= 0.25f)
+                || GeneEvolutionManager.SessionElapsed >= 60f) // time fallback: always fires ~27s into Era 1
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             Choices = new[]
             {
@@ -45,7 +66,8 @@ public static class GeneCatalog
             Prerequisites = new[] { "Multicellularity" },
             IsEra1Event = true,
             IsEligible = agent => (agent.LifetimeEats >= agent.locomotorGeneEatThreshold
-                || agent.StressLevel >= 35f)
+                || agent.StressLevel >= 35f
+                || GeneEvolutionManager.SessionElapsed >= 75f)
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             Choices = new[]
             {
@@ -64,26 +86,52 @@ public static class GeneCatalog
             }
         });
 
+        // ── Sexual DIFFERENTIATION (anisogamy → separate sexes) ──────────────────────────────
+        // Real evolutionary order: sexes DIFFERENTIATE before sexual REPRODUCTION as we know it. This
+        // event only splits the lineage into male/female — each adopter (and, via inheritance, its
+        // offspring) is 50/50 male/female. It does NOT yet enable mate-based reproduction; that is the
+        // separate, later ReproductiveStrategyShift event which REQUIRES this first. Gated to the
+        // mid-late biological sub-phases (EraManager.CurrentEra ≥ 3) so sexes don't appear near
+        // abiogenesis. TUNABLE era gate.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "SexualDifferentiation",
+            Prerequisites = new[] { "Multicellularity" },
+            IsEra1Event = true,
+            IsEligible = agent => (EraManager.Instance == null || EraManager.Instance.CurrentEra >= 3)
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Differentiate into separate sexes (male / female)", Apply = agent => agent.DifferentiateSex() },
+                new GeneChoice { Label = "Remain undifferentiated (isogamous / asexual lineage)", Apply = agent => { /* stays undifferentiated; gene already marked acquired */ } }
+            },
+            // NPCs / late maturers differentiate by default so sexual reproduction can later emerge.
+            DefaultAutoApply = agent => agent.DifferentiateSex()
+        });
+
+        // ── Sexual REPRODUCTION (mate-based trait blending) ──────────────────────────────────
+        // Requires sexual DIFFERENTIATION first (separate sexes must exist before they can combine),
+        // and fires MUCH later than it used to — gated to EraManager.CurrentEra ≥ 4 so a lineage
+        // doesn't start pairing off almost immediately. Only differentiated organisms are eligible.
         GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "ReproductiveStrategyShift",
-            Prerequisites = new[] { "Multicellularity" },
+            Prerequisites = new[] { "SexualDifferentiation" },
             IsEra1Event = true,
-            // Red Queen: sex is favored specifically under strong coevolving parasite pressure.
-            // PathogenPressure (density proxy) is the primary fixation driver; age+eats is the
-            // origination floor. StressLevel kept as a secondary signal per §3.
-            IsEligible = agent => (agent.PathogenPressure >= 0.55f
-                || agent.StressLevel >= 45f
-                || (agent.AgeSeconds >= agent.reproductiveShiftAgeThreshold
-                    && agent.LifetimeEats >= agent.reproductiveShiftEatThreshold))
+            // Red Queen: sex is favored under coevolving parasite pressure; age/time act as origination
+            // floors. Differentiation + late era gate are the hard prerequisites.
+            IsEligible = agent => agent.IsDifferentiated
+                && (EraManager.Instance == null || EraManager.Instance.CurrentEra >= 4)
+                && (agent.PathogenPressure >= 0.45f
+                    || agent.AgeSeconds >= agent.reproductiveShiftAgeThreshold
+                    || GeneEvolutionManager.SessionElapsed >= 120f)
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             Choices = new[]
             {
                 new GeneChoice { Label = "Remain Asexual (clone with mutation drift)", Apply = agent => agent.BecomeAsexual() },
-                new GeneChoice { Label = "Shift to Sexual Reproduction (blend traits with a mate)", Apply = agent => agent.BecomeSexual() }
+                new GeneChoice { Label = "Adopt Sexual Reproduction (blend traits with a mate)", Apply = agent => agent.BecomeSexual() }
             },
-            // Background agents that mature after the player has already chosen default to
-            // the conservative/unchanged option (stay asexual).
+            // Background agents that mature after the player has chosen default to staying asexual.
             DefaultAutoApply = agent => agent.BecomeAsexual()
         });
 
@@ -128,13 +176,20 @@ public static class GeneCatalog
 
         // e1_tolerant_metabolism_emergence / e1_anoxic_refuge_speciation: OR-gate at the
         // Great Oxidation Event. Lineages must choose: adapt to the new oxidizing atmosphere
-        // (Path A) or retreat permanently to anoxic refuges (Path B).
+        // (Path A) or retreat permanently to anoxic refuges (Path B). Eligible on EITHER the
+        // pre-existing GreatGasEventFired crisis OR rising O2 itself — previously this ONLY checked
+        // GreatGasEventFired, an unrelated trigger that isn't guaranteed to correlate with O2
+        // accumulation at all, meaning a world where O2 rose from photosynthesis without that
+        // specific crisis ever firing had this real escape route (retreat to anoxic refuge) simply
+        // unavailable — the actual real-world response to the GOE, now genuinely reachable.
         GeneEvolutionManager.Register(new GeneDefinition
         {
             Id = "EfficientRespiration",
             Prerequisites = new[] { "Multicellularity" },
             IsEra1Event = true,
-            IsEligible = agent => AtmosphereManager.Instance != null && AtmosphereManager.Instance.GreatGasEventFired
+            IsEligible = agent => AtmosphereManager.Instance != null
+                && (AtmosphereManager.Instance.GreatGasEventFired
+                    || AtmosphereManager.Instance.GetFraction("O2") >= AgentController.AerobicUnlockO2Threshold)
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             Choices = new[]
             {
@@ -166,19 +221,25 @@ public static class GeneCatalog
             Id = "PhotosynthesisEmergence",
             Prerequisites = new[] { "Nucleus" },
             IsEra1Event = true,
+            BaseMutationProbability = 0.03f, // MultiOrigin — photosynthesis arose independently many times
             // KingdomFork supersedes this: if the lineage already chose heterotrophy (or
             // any other metabolic direction) at KingdomFork, don't re-open the question.
             IsEligible = agent => agent.Metabolism == MetabolismType.Chemosynthetic
                 && !agent.AcquiredGenes.Contains("KingdomFork")
                 && (agent.LifetimeEats >= agent.sensoryGeneEatThreshold
-                    || agent.ResourceScarcity >= 0.55f) // light becomes attractive when chemo substrate is scarce
+                    || agent.ResourceScarcity >= 0.55f
+                    || GeneEvolutionManager.SessionElapsed >= 65f) // time fallback
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             Choices = new[]
             {
                 new GeneChoice
                 {
+                    // Always offered to the player (IsAvailable unrestricted — an informed human can
+                    // still gamble on it). FitnessGate blocks autonomous NPC/mutation-origin paths
+                    // from picking it on a world where it wouldn't actually pay off.
                     Label = "Evolve Photosynthesis (harvest stellar energy; drives the Great Gas Event)",
-                    Apply = agent => agent.BecomePhototrophic()
+                    Apply = agent => agent.BecomePhototrophic(),
+                    FitnessGate = agent => agent.IsPhotosynthesisLocallyViable()
                 },
                 new GeneChoice
                 {
@@ -186,7 +247,194 @@ public static class GeneCatalog
                     Apply = agent => { /* stays chemosynthetic */ }
                 }
             },
-            DefaultAutoApply = agent => agent.BecomePhototrophic()
+            // NPC/background agents only auto-convert if photosynthesis would actually be
+            // energy-positive HERE (real local star luminosity, orbit distance, atmosphere, depth).
+            // Previously this fired unconditionally, so on a light-starved world (e.g. a
+            // near-zero-luminosity red dwarf) entire populations converted en masse to a metabolism
+            // that couldn't sustain them, abandoning a working chemosynthetic energy source for
+            // nothing — the direct cause of at least one observed near-total ecosystem collapse.
+            DefaultAutoApply = agent => { if (agent.IsPhotosynthesisLocallyViable()) agent.BecomePhototrophic(); }
+        });
+
+        // ── Respiration evolutionary sequence (respiration-evolutionary-sequence-fix-spec) ──────
+        // Real-world reference: anaerobic metabolism → anoxygenic photosynthesis → oxygenic
+        // photosynthesis → atmospheric O2 accumulation (Great Oxidation Event) → aerobic respiration.
+        // Every organism SPAWNS at RespirationTier.Primitive (a low-efficiency generic anaerobic
+        // metabolism — see GibbsFactor's tier multiplier), not pre-assigned a fully-efficient gas
+        // pair. The genes below are the OR-gate branch point: multiple independent, real anaerobic
+        // strategies exist in parallel, each keyed to a different locally-available substrate, so
+        // different lineages under different local chemistry can genuinely diverge — replacing the
+        // old single AlternativeRespirationPathway swap-gene. Minimum substrate fraction (5%) keeps
+        // a branch from offering itself on a world where that gas barely exists.
+        const float SubstrateViableFraction = 0.05f; // TUNABLE — "present in meaningful quantity"
+
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "Methanogenesis",
+            Prerequisites = new[] { "Multicellularity" },
+            IsEra1Event = true,
+            BaseMutationProbability = 0.04f, // MultiOrigin — real anaerobic strategy, evolved independently many times
+            IsEligible = agent => agent.RespirationTier == RespirationTier.Primitive
+                && AtmosphereManager.Instance != null
+                && AtmosphereManager.Instance.GetFraction("H2") >= SubstrateViableFraction,
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Evolve Methanogenesis (H2 → CH4) — an efficient anaerobic pathway exploiting locally abundant hydrogen",
+                    Apply = agent => agent.SpecializeAnaerobic("H2", "CH4", "Methanogenesis") },
+                new GeneChoice { Label = "Remain Undifferentiated — stay on the primitive, low-efficiency baseline metabolism",
+                    Apply = agent => { /* stays Primitive */ } }
+            },
+            DefaultAutoApply = agent => agent.SpecializeAnaerobic("H2", "CH4", "Methanogenesis")
+        });
+
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "SulfurRespiration",
+            Prerequisites = new[] { "Multicellularity" },
+            IsEra1Event = true,
+            BaseMutationProbability = 0.04f,
+            IsEligible = agent => agent.RespirationTier == RespirationTier.Primitive
+                && AtmosphereManager.Instance != null
+                && (AtmosphereManager.Instance.GetFraction("SO2") >= SubstrateViableFraction
+                    || AtmosphereManager.Instance.GetFraction("H2S") >= SubstrateViableFraction),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Evolve Sulfur Respiration — specialize into whichever sulfur compound (SO2/H2S) is locally richer",
+                    Apply = agent =>
+                    {
+                        float so2 = AtmosphereManager.Instance?.GetFraction("SO2") ?? 0f;
+                        float h2s = AtmosphereManager.Instance?.GetFraction("H2S") ?? 0f;
+                        if (so2 >= h2s) agent.SpecializeAnaerobic("SO2", "H2S", "SulfurRespiration");
+                        else agent.SpecializeAnaerobic("H2S", "SO2", "SulfurRespiration");
+                    } },
+                new GeneChoice { Label = "Remain Undifferentiated — stay on the primitive, low-efficiency baseline metabolism",
+                    Apply = agent => { /* stays Primitive */ } }
+            },
+            DefaultAutoApply = agent =>
+            {
+                float so2 = AtmosphereManager.Instance?.GetFraction("SO2") ?? 0f;
+                float h2s = AtmosphereManager.Instance?.GetFraction("H2S") ?? 0f;
+                if (so2 >= h2s) agent.SpecializeAnaerobic("SO2", "H2S", "SulfurRespiration");
+                else agent.SpecializeAnaerobic("H2S", "SO2", "SulfurRespiration");
+            }
+        });
+
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "NitrogenRespiration",
+            Prerequisites = new[] { "Multicellularity" },
+            IsEra1Event = true,
+            BaseMutationProbability = 0.03f,
+            IsEligible = agent => agent.RespirationTier == RespirationTier.Primitive
+                && AtmosphereManager.Instance != null
+                && AtmosphereManager.Instance.GetFraction("NH3") >= SubstrateViableFraction,
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Evolve Nitrogen Respiration (NH3 → N2) — exploit locally abundant ammonia",
+                    Apply = agent => agent.SpecializeAnaerobic("NH3", "N2", "NitrogenRespiration") },
+                new GeneChoice { Label = "Remain Undifferentiated — stay on the primitive, low-efficiency baseline metabolism",
+                    Apply = agent => { /* stays Primitive */ } }
+            },
+            DefaultAutoApply = agent => agent.SpecializeAnaerobic("NH3", "N2", "NitrogenRespiration")
+        });
+
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "PhosphineRespiration",
+            Prerequisites = new[] { "Multicellularity" },
+            IsEra1Event = true,
+            BaseMutationProbability = 0.03f,
+            // Shares the H2 substrate check with Methanogenesis by design — an H2-rich world can
+            // support multiple simultaneously-viable anaerobic strategies, and different lineages
+            // genuinely diverging between them (rather than converging on one) is the whole point
+            // of this being an OR-gate branch instead of a single deterministic path.
+            IsEligible = agent => agent.RespirationTier == RespirationTier.Primitive
+                && AtmosphereManager.Instance != null
+                && AtmosphereManager.Instance.GetFraction("H2") >= SubstrateViableFraction,
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Evolve Phosphine Respiration (H2 → PH3) — an alternative hydrogen-exploiting pathway",
+                    Apply = agent => agent.SpecializeAnaerobic("H2", "PH3", "PhosphineRespiration") },
+                new GeneChoice { Label = "Remain Undifferentiated — stay on the primitive, low-efficiency baseline metabolism",
+                    Apply = agent => { /* stays Primitive */ } }
+            },
+            DefaultAutoApply = agent => agent.SpecializeAnaerobic("H2", "PH3", "PhosphineRespiration")
+        });
+
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "HalideMetalRespiration",
+            Prerequisites = new[] { "Multicellularity" },
+            IsEra1Event = true,
+            BaseMutationProbability = 0.03f,
+            IsEligible = agent => agent.RespirationTier == RespirationTier.Primitive
+                && !agent.WouldGasBeLethal("F2") // F2 is lethal to Carbon/Boron/Nitrogen/Phosphorus/Sulfur backbones
+                && AtmosphereManager.Instance != null
+                && AtmosphereManager.Instance.GetFraction("F2") >= SubstrateViableFraction,
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Evolve Halide-Metal Respiration (F2 → SiF4) — exploit locally abundant fluorine",
+                    Apply = agent => agent.SpecializeAnaerobic("F2", "SiF4", "HalideMetalRespiration") },
+                new GeneChoice { Label = "Remain Undifferentiated — stay on the primitive, low-efficiency baseline metabolism",
+                    Apply = agent => { /* stays Primitive */ } }
+            },
+            DefaultAutoApply = agent => agent.SpecializeAnaerobic("F2", "SiF4", "HalideMetalRespiration")
+        });
+
+        // Issue 3: aerobic respiration — a late, atmosphere-gated unlock causally downstream of
+        // accumulated PhotosynthesisEmergence activity (which produces the O2 this gate reads), NOT
+        // available from tick one and NOT dependent on any specific anaerobic branch above — it
+        // represents a genuinely new capability, not a swap. Real aerobic respiration's substantially
+        // higher ATP yield (AerobicYieldMultiplier in GibbsFactor) is what should drive it toward
+        // eventual dominance once unlocked, mirroring its actual historical trajectory.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "AerobicRespiration",
+            Prerequisites = new[] { "Multicellularity" },
+            IsEra1Event = true,
+            BaseMutationProbability = 0.06f, // MultiOrigin, higher than the anaerobic branches — a strong, real fitness win once available
+            IsEligible = agent => agent.RespirationTier != RespirationTier.Aerobic
+                && !agent.WouldGasBeLethal("O2") // Silicon/Germanium/Tin/Boron/Phosphorus backbones: O2 is lethal, not a fitness win — their real escape is EfficientRespiration's anoxic-refuge path
+                && AtmosphereManager.Instance != null
+                && AtmosphereManager.Instance.GetFraction("O2") >= AgentController.AerobicUnlockO2Threshold,
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Evolve Aerobic Respiration (O2 → CO2) — dramatically higher energy yield now that atmospheric O2 has accumulated",
+                    Apply = agent => agent.BecomeAerobic() },
+                new GeneChoice { Label = "Remain Anaerobic — forgo the yield advantage; oxygen exposure will carry a rising toxicity cost",
+                    Apply = agent => { /* stays anaerobic; ComputeOxygenToxicityCost now applies */ } }
+            },
+            DefaultAutoApply = agent => agent.BecomeAerobic() // NPCs take the strictly-better option once available, same as PhotosynthesisEmergence's pattern
+        });
+
+        // e1_thermal_tolerance_expansion: widen the survivable temperature band. MultiOrigin —
+        // thermal tolerance evolved independently across countless lineages. Driven by ACTUAL thermal
+        // stress (StressLevel folds in climate/thermal-cycle discomfort), not a bare timer, so a
+        // lineage under climate pressure is far more likely to fix the tolerance-widening mutation —
+        // giving climate crises a real adaptive response instead of flat unaffected survival.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "ThermalToleranceExpansion",
+            Prerequisites = new string[0], // foundational: baseline organisms have SOME tolerance; this widens it
+            IsEra1Event = true,
+            BaseMutationProbability = 0.04f, // MultiOrigin — arises independently per lineage at reproduction
+            IsEligible = agent => (agent.StressLevel >= 35f || GeneEvolutionManager.SessionElapsed >= 80f)
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            Choices = new[]
+            {
+                new GeneChoice
+                {
+                    Label = "Broaden Thermal Tolerance — widen the survivable temperature band (+Hardiness, +thermal-cycle tolerance)",
+                    Apply = agent => agent.ExpandThermalTolerance()
+                },
+                new GeneChoice
+                {
+                    Label = "Specialize to Current Climate — stay narrowly adapted (lower overhead, higher risk if climate shifts)",
+                    Apply = agent => { /* no change */ }
+                }
+            },
+            // Background lineages broaden tolerance automatically only when genuinely stressed.
+            DefaultAutoApply = agent => { if (agent.StressLevel >= 45f) agent.ExpandThermalTolerance(); }
         });
 
         // e1_motility_emergence: the transition from passive drifter to self-directed mover.
@@ -197,9 +445,11 @@ public static class GeneCatalog
             Id = "MotilityEmergence",
             Prerequisites = new[] { "Multicellularity" },
             IsEra1Event = true,
+            BaseMutationProbability = 0.03f, // MultiOrigin — directed motility arose independently across lineages
             IsEligible = agent => (EraManager.Instance == null || EraManager.Instance.CurrentEra >= 1)
                 && (agent.LifetimeEats >= agent.locomotorGeneEatThreshold
-                    || agent.ResourceScarcity >= 0.50f) // movement pays off when resources are patchy, not just scarce
+                    || agent.ResourceScarcity >= 0.50f
+                    || GeneEvolutionManager.SessionElapsed >= 80f)
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             Choices = new[]
             {
@@ -217,6 +467,50 @@ public static class GeneCatalog
             DefaultAutoApply = agent => agent.BecomeMotile()
         });
 
+        // ── Land Colonization (the missing land/sea axis) ─────────────────────────────────────
+        // Before this, EVERY organism was permanently aquatic — _isAquatic was never flipped anywhere,
+        // so "land species" never really existed (an agent standing on dry ground was still counted as
+        // aquatic, just taking a desiccation penalty). This is the real, heritable habitat transition —
+        // requires motility (you can't colonize land by drifting) and enough time/exposure that the
+        // lineage has plausibly been spending time out of the water. Can fire any time in Era 1 or 2.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "LandColonization",
+            Prerequisites = new[] { "MotilityEmergence" },
+            IsEra1Event = true,
+            BaseMutationProbability = 0.02f, // MultiOrigin — terrestrialization arose independently many times
+            IsEligible = agent => agent.IsAquatic && agent.HasMotility
+                && (agent.CurrentMedium == HabitatMedium.Land || agent.ResourceScarcity >= 0.5f
+                    || GeneEvolutionManager.SessionElapsed >= 100f),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Colonize Land (leave the water; moisture tolerance shifts dry)", Apply = agent => agent.ColonizeLand() },
+                new GeneChoice { Label = "Remain Aquatic (stay in the water)", Apply = agent => { } },
+            },
+            // NPCs default to staying aquatic — colonizing land is a deliberate, less-common branch,
+            // not the safe default (an aquatic organism forced onto land without adaptation risks
+            // desiccation same as before this gene existed).
+            DefaultAutoApply = agent => { }
+        });
+
+        // Reverse transition: much rarer than the forward one (real precedent: cetaceans, pinnipeds,
+        // sea snakes re-adapting to water after their ancestors left it).
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "ReturnToSea",
+            Prerequisites = new[] { "LandColonization" },
+            IsEra1Event = true,
+            BaseMutationProbability = 0.004f, // much rarer than the forward transition
+            IsEligible = agent => !agent.IsAquatic && agent.HasMotility
+                && (agent.CurrentMedium == HabitatMedium.Sea && agent.ResourceScarcity >= 0.6f),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Return to the Sea (re-adapt to an aquatic existence)", Apply = agent => agent.ReturnToSea() },
+                new GeneChoice { Label = "Remain Terrestrial", Apply = agent => { } },
+            },
+            DefaultAutoApply = agent => { }
+        });
+
         // Manipulation appendage development: evolve increasingly dexterous structures.
         // Gated behind motility (you need to move to develop limbs) and Minimal-Replicator Seas+.
         GeneEvolutionManager.Register(new GeneDefinition
@@ -226,7 +520,8 @@ public static class GeneCatalog
             IsEra1Event = true,
             IsEligible = agent => agent.Manipulation == ManipulationLevel.None
                 && (EraManager.Instance == null || EraManager.Instance.CurrentEra >= 1)
-                && (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 2 || agent.StressLevel >= 40f)
+                && (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 2 || agent.StressLevel >= 40f
+                    || GeneEvolutionManager.SessionElapsed >= 110f)
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             Choices = new[]
             {
@@ -308,7 +603,8 @@ public static class GeneCatalog
             IsEra1Event = true,
             IsEligible = agent => agent.Sociality == SocialityBaseline.Solitary
                 && (EraManager.Instance == null || EraManager.Instance.CurrentEra >= 2) // GOE+
-                && (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 3 || agent.StressLevel >= 40f)
+                && (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 3 || agent.StressLevel >= 40f
+                    || GeneEvolutionManager.SessionElapsed >= 120f)
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             Choices = new[]
             {
@@ -361,7 +657,8 @@ public static class GeneCatalog
             IsEra1Event = true,
             IsEligible = agent => agent.Metabolism == MetabolismType.Phototrophic
                 && (EraManager.Instance == null || EraManager.Instance.CurrentEra >= 2)
-                && (agent.LifetimeEats >= agent.sensoryGeneEatThreshold * 2 || agent.StressLevel >= 40f)
+                && (agent.LifetimeEats >= agent.sensoryGeneEatThreshold * 2 || agent.StressLevel >= 40f
+                    || GeneEvolutionManager.SessionElapsed >= 130f)
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             Choices = new[]
             {
@@ -389,7 +686,8 @@ public static class GeneCatalog
             Id = "StructuralSpiculeSupport",
             Prerequisites = new[] { "Multicellularity" },
             IsEra1Event = true,
-            IsEligible = agent => (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 2 || agent.StressLevel >= 35f)
+            IsEligible = agent => (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 2 || agent.StressLevel >= 35f
+                    || GeneEvolutionManager.SessionElapsed >= 100f)
                 && (EraManager.Instance == null || EraManager.Instance.CurrentEra >= 2)
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             AutoApply = agent =>
@@ -406,10 +704,15 @@ public static class GeneCatalog
             Id = "GermLayerComplexity",
             Prerequisites = new[] { "Multicellularity" },
             IsEra1Event = true,
+            // Era gate lowered from >=3 to >=1: germ-layer differentiation is foundational tissue
+            // organization that specialized structural genes (ProtectiveStructureEmergence's
+            // endoskeleton option) are built from, so it needs to resolve on a comparable or
+            // earlier timescale — a >=3 floor was making it fire well after ProtectiveStructureEmergence
+            // (which has no era gate), backwards from the intended dependency order.
             IsEligible = agent => (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 3
                     || agent.StressLevel >= 40f
                     || agent.PredationPressure >= 0.30f) // predation weakly promotes tissue-layer complexity
-                && (EraManager.Instance == null || EraManager.Instance.CurrentEra >= 3)
+                && (EraManager.Instance == null || EraManager.Instance.CurrentEra >= 1)
                 && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
             Choices = new[]
             {
@@ -531,6 +834,336 @@ public static class GeneCatalog
                         agent.temperaturePreference, agent.moisturePreference);
                 }
             }
+        });
+
+        // appearance-generation-spec §2.7 — the three previously-unspecified M3 structural-support
+        // branches. Automatic (no player choice, matching the spec's own framing that these are
+        // rare/crisis-driven or hard-gated at chemistry level, not a normal decision point), each an
+        // OR-gate sibling/follow-on of the ProtectiveStructureEmergence fork above, not a new
+        // prerequisite chain.
+
+        // e1_endoskeleton_mineralization: endo-cartilage's mineralized upgrade. Requires the
+        // cartilage precursor already present; driven by sustained large size OR a high-gravity
+        // world — the same Kleiber-scaling size-pressure logic already governing body-size limits
+        // elsewhere, applied to why a body would bother mineralizing an internal skeleton at all.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_endoskeleton_mineralization",
+            Prerequisites = new[] { "ProtectiveStructureEmergence" },
+            IsEra1Event = true,
+            IsEligible = agent => agent.BodyPlan == BodyPlanType.Endoskeleton
+                && (agent.strengthTrait >= 60f
+                    || (PlanetGravity.Instance != null && PlanetGravity.Instance.SurfaceGravityMs2 >= 11f))
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            AutoApply = agent =>
+            {
+                agent.SetBodyPlan(BodyPlanType.EndoMineralized);
+                agent.SetTraits(agent.visionTrait, agent.speedTrait,
+                    agent.strengthTrait + 10f, agent.hardinessTrait + 8f,
+                    agent.temperaturePreference, agent.moisturePreference);
+            }
+        });
+
+        // e1_mixed_armor_emergence: dermal ossification layered over an existing exoskeleton (or the
+        // reverse) — genuinely crisis-driven, not a normal branch, gated on EXTREME sustained
+        // predation well above ProtectiveStructureEmergence's own 0.25 origination threshold.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_mixed_armor_emergence",
+            Prerequisites = new[] { "ProtectiveStructureEmergence" },
+            IsEra1Event = true,
+            IsEligible = agent => (agent.BodyPlan == BodyPlanType.Exoskeleton || agent.BodyPlan == BodyPlanType.Shell)
+                && agent.PredationPressure >= 0.6f
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            AutoApply = agent =>
+            {
+                agent.SetBodyPlan(BodyPlanType.MixedArmor);
+                agent.SetTraits(agent.visionTrait, Mathf.Max(agent.speedTrait - 5f, 0f),
+                    agent.strengthTrait + 5f, agent.hardinessTrait + 15f,
+                    agent.temperaturePreference, agent.moisturePreference);
+            }
+        });
+
+        // e1_crystalline_lattice_emergence: hard-gated by world/backbone generation at world-seed
+        // time, not a lineage choice — no other branch can reach this value, and a silicon-backbone
+        // lineage has no reason NOT to express it (there is no competing soft-bodied silicon
+        // strategy in this design), so it simply supersedes whatever ProtectiveStructureEmergence
+        // chose the moment backbone chemistry makes it available.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_crystalline_lattice_emergence",
+            Prerequisites = new[] { "ProtectiveStructureEmergence" },
+            IsEra1Event = true,
+            IsEligible = agent => agent.Backbone == BackboneElement.Silicon
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            AutoApply = agent =>
+            {
+                agent.SetBodyPlan(BodyPlanType.Crystalline);
+                agent.SetTraits(agent.visionTrait, agent.speedTrait,
+                    agent.strengthTrait + 8f, agent.hardinessTrait + 25f,
+                    agent.temperaturePreference, agent.moisturePreference);
+            }
+        });
+
+        // ── Era 1 remaining morphological axes (appearance-generation-spec §2.2/§2.8) ──────────
+        // M2 Segmentation, M6 Primary Sensory Modality, M9 Feeding Apparatus, M10 Integument
+        // Elaboration, M5 limb-pair differentiation, vocal apparatus, and the two rare M1
+        // non-bilaterian symmetry branches (Biradial/ColonialModular). Same OR-gated, contingent,
+        // order-sensitive resolution as the rest of Era 1 — no forced deterministic sequence.
+
+        // e1_metameric_segmentation: repeated body segments. Requires triploblastic tissue
+        // organization (the same GermLayerComplexity prerequisite the endoskeleton path uses) —
+        // true repeated segmentation is a tissue-organization achievement, not a surface pattern.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_metameric_segmentation",
+            Prerequisites = new[] { "GermLayerComplexity" },
+            IsEra1Event = true,
+            IsEligible = agent => agent.HasGermLayers && agent.Segmentation == SegmentationType.Unsegmented
+                && (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 3 || agent.StressLevel >= 35f
+                    || GeneEvolutionManager.SessionElapsed >= 115f)
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Develop Metameric Segmentation (repeated body segments — enables later tagmatization)",
+                    Apply = agent => agent.SetSegmentation(SegmentationType.Metameric) },
+                new GeneChoice { Label = "Remain Unsegmented (lower developmental cost)",
+                    Apply = agent => { /* no change */ } },
+            },
+            DefaultAutoApply = agent => agent.SetSegmentation(SegmentationType.Metameric)
+        });
+
+        // e1_tagmatization: segments fuse into specialized functional regions (head/thorax/abdomen
+        // equivalent). Requires differentiated appendages (arthropod tagmata evolved alongside
+        // jointed limbs, not independently of them).
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_tagmatization",
+            Prerequisites = new[] { "e1_metameric_segmentation", "ArticulatedAppendages" },
+            IsEra1Event = true,
+            IsEligible = agent => agent.Segmentation == SegmentationType.Metameric
+                && agent.Manipulation >= ManipulationLevel.Articulated
+                && (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 5 || agent.StressLevel >= 45f)
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Develop Tagmatization (fused functional body regions — specialized locomotion/feeding/reproduction zones)",
+                    Apply = agent => agent.SetSegmentation(SegmentationType.Tagmatized) },
+                new GeneChoice { Label = "Retain Uniform Segmentation (simpler, sufficient for current niche)",
+                    Apply = agent => { /* no change */ } },
+            },
+            DefaultAutoApply = agent => { /* rare auto-progression — mostly player-driven, matches GroupFormation's tier */ }
+        });
+
+        // e1_segment_simplification: rare reversion — a segmented ancestor's small-bodied descendant
+        // smooths its segmentation back out (real precedent: secondarily-simplified segmentation in
+        // miniaturized derived lineages). Much rarer than the forward transitions, matching ReturnToSea.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_segment_simplification",
+            Prerequisites = new[] { "e1_metameric_segmentation" },
+            IsEra1Event = true,
+            BaseMutationProbability = 0.006f,
+            IsEligible = agent => (agent.Segmentation == SegmentationType.Metameric || agent.Segmentation == SegmentationType.Tagmatized)
+                && agent.BodySizeClass <= SizeClass.Small
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            AutoApply = agent => agent.SetSegmentation(SegmentationType.SecondarilySimplified)
+        });
+
+        // e1_primary_sensory_modality: which sense predominates, refining the generic vision-boost
+        // choice from SensoryOrganDevelopment into a real dominant-modality axis. OR-gated siblings,
+        // matching the M3 catalog pattern — one card, mutually exclusive choices, per-choice
+        // preconditions rather than five separate always-eligible events.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_primary_sensory_modality",
+            Prerequisites = new[] { "SensoryOrganDevelopment" },
+            IsEra1Event = true,
+            IsEligible = agent => agent.PrimarySense == SensoryModality.Chemosensory
+                && (agent.LifetimeEats >= agent.sensoryGeneEatThreshold * 3 || agent.StressLevel >= 35f
+                    || GeneEvolutionManager.SessionElapsed >= 120f)
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Visual — image-forming eyes (requires developed vision)",
+                    IsAvailable = agent => agent.visionTrait >= 40f,
+                    Apply = agent => agent.SetPrimarySense(SensoryModality.Visual) },
+                new GeneChoice { Label = "Mechanosensory — vibration/pressure detection (aquatic-favored)",
+                    Apply = agent => agent.SetPrimarySense(SensoryModality.Mechanosensory) },
+                new GeneChoice { Label = "Electroreceptive — bioelectric field detection (aquatic specialist)",
+                    IsAvailable = agent => agent.IsAquatic,
+                    Apply = agent => agent.SetPrimarySense(SensoryModality.Electroreceptive) },
+                new GeneChoice { Label = "Thermoreceptive — heat-gradient detection (favored in high thermal-variance habitats)",
+                    Apply = agent => agent.SetPrimarySense(SensoryModality.Thermoreceptive) },
+                new GeneChoice { Label = "Magnetoreceptive — geomagnetic-field detection (long-range dispersal)",
+                    IsAvailable = agent => agent.HasMotility,
+                    Apply = agent => agent.SetPrimarySense(SensoryModality.Magnetoreceptive) },
+                new GeneChoice { Label = "Remain Chemosensory — taste/smell gradients only (lowest cost, no change)",
+                    Apply = agent => { /* no change */ } },
+            },
+            DefaultAutoApply = agent => { /* NPCs keep the chemosensory default unless player-driven */ }
+        });
+
+        // e1_multimodal_sensory_integration: ceiling value, reached only after 2+ modalities already
+        // acquired — auto-apply, no player decision (an emergent integration, not a fresh choice).
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_multimodal_sensory_integration",
+            Prerequisites = new[] { "e1_primary_sensory_modality" },
+            IsEra1Event = true,
+            IsEligible = agent => agent.AcquiredSenseCount >= 2 && agent.PrimarySense != SensoryModality.Multimodal
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            AutoApply = agent => agent.SetPrimarySense(SensoryModality.Multimodal)
+        });
+
+        // e1_feeding_apparatus_specialization: HOW food is physically taken in, distinct from
+        // MetabolismType (the energy-source axis) — a Heterotrophic organism can be a grazer, a
+        // detritivore, an active predator, or (rarely, under extreme scarcity) a parasite.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_feeding_apparatus_specialization",
+            Prerequisites = new[] { "KingdomFork" },
+            IsEra1Event = true,
+            IsEligible = agent => agent.Feeding == FeedingApparatus.FilterPassive
+                && (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 3 || agent.StressLevel >= 35f
+                    || GeneEvolutionManager.SessionElapsed >= 140f)
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Active Predation (chase and consume prey)",
+                    IsAvailable = agent => agent.HasMotility && (agent.Metabolism == MetabolismType.Heterotrophic || agent.Metabolism == MetabolismType.Mixotrophic),
+                    Apply = agent => agent.SetFeedingApparatus(FeedingApparatus.PredatorActive) },
+                new GeneChoice { Label = "Grazing (steady consumption of abundant, low-defense food)",
+                    IsAvailable = agent => agent.Metabolism == MetabolismType.Heterotrophic || agent.Metabolism == MetabolismType.Mixotrophic,
+                    Apply = agent => agent.SetFeedingApparatus(FeedingApparatus.Grazer) },
+                new GeneChoice { Label = "Detritivory (consume dead organic matter — low-competition niche)",
+                    Apply = agent => agent.SetFeedingApparatus(FeedingApparatus.Detritivore) },
+                new GeneChoice { Label = "Parasitic Feeding (exploit host organisms directly — high-scarcity environments)",
+                    IsAvailable = agent => agent.Metabolism == MetabolismType.Heterotrophic && agent.ResourceScarcity >= 0.8f,
+                    Apply = agent => agent.SetFeedingApparatus(FeedingApparatus.Parasitic) },
+                new GeneChoice { Label = "Chemosymbiosis (host chemosynthetic partners)",
+                    IsAvailable = agent => agent.Metabolism == MetabolismType.Chemosynthetic,
+                    Apply = agent => agent.SetFeedingApparatus(FeedingApparatus.Chemosymbiotic) },
+                new GeneChoice { Label = "Photosymbiosis (host photosynthetic partners)",
+                    IsAvailable = agent => agent.Metabolism == MetabolismType.Phototrophic || agent.Metabolism == MetabolismType.Mixotrophic,
+                    Apply = agent => agent.SetFeedingApparatus(FeedingApparatus.Photosymbiotic) },
+            },
+            DefaultAutoApply = agent =>
+            {
+                if (agent.Metabolism == MetabolismType.Heterotrophic || agent.Metabolism == MetabolismType.Mixotrophic)
+                    agent.SetFeedingApparatus(agent.HasMotility ? FeedingApparatus.PredatorActive : FeedingApparatus.Grazer);
+                else
+                    agent.SetFeedingApparatus(FeedingApparatus.Detritivore);
+            }
+        });
+
+        // e1_integument_elaboration: surface texture/type only (color/bioluminescence remain the
+        // separate, still-unimplemented circulatory-chromophore-spec concern). Chitin/ShellExternal/
+        // Crystalline mirror an existing BodyPlanType choice; FilamentsFur is the one genuinely
+        // independent branch (thermoregulatory, not a structural-support byproduct).
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_integument_elaboration",
+            Prerequisites = new[] { "Multicellularity" },
+            IsEra1Event = true,
+            IsEligible = agent => agent.Integument == IntegumentType.BareMucous
+                && (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 2 || agent.StressLevel >= 30f
+                    || GeneEvolutionManager.SessionElapsed >= 100f)
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Develop Scaled Integument (dermal scales — moderate protection, low cost)",
+                    Apply = agent => agent.SetIntegument(IntegumentType.Scales) },
+                new GeneChoice { Label = "Chitinous Cuticle (matches the existing exoskeleton)",
+                    IsAvailable = agent => agent.BodyPlan == BodyPlanType.Exoskeleton,
+                    Apply = agent => agent.SetIntegument(IntegumentType.Chitin) },
+                new GeneChoice { Label = "Mineral Shell Surface (matches the existing shell)",
+                    IsAvailable = agent => agent.BodyPlan == BodyPlanType.Shell,
+                    Apply = agent => agent.SetIntegument(IntegumentType.ShellExternal) },
+                new GeneChoice { Label = "Filament/Fur Insulation (thermoregulatory covering — cold/variance specialist)",
+                    IsAvailable = agent => agent.hardinessTrait >= 55f,
+                    Apply = agent => agent.SetIntegument(IntegumentType.FilamentsFur) },
+                new GeneChoice { Label = "Crystalline Surface (matches the crystalline backbone)",
+                    IsAvailable = agent => agent.BodyPlan == BodyPlanType.Crystalline,
+                    Apply = agent => agent.SetIntegument(IntegumentType.Crystalline) },
+                new GeneChoice { Label = "Remain Bare/Mucous-Coated (lowest cost, no change)",
+                    Apply = agent => { /* no change */ } },
+            },
+            DefaultAutoApply = agent => agent.SetIntegument(IntegumentType.Scales)
+        });
+
+        // e1_limb_differentiation (§2.8 — flagged missing): splits a previously-undifferentiated
+        // appendage budget into dedicated locomotor vs. manipulator pairs. Before this fires,
+        // ManipulatorPairs stays 0 and the descriptor's derived tool_ceiling stays false even at
+        // high Manipulation tiers — appendages exist but serve both roles at once.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_limb_differentiation",
+            Prerequisites = new[] { "ManipulationAppendageDevelopment" },
+            IsEra1Event = true,
+            IsEligible = agent => agent.Manipulation >= ManipulationLevel.Articulated && agent.LocomotorPairs == 0
+                && (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 4 || agent.StressLevel >= 40f)
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Differentiate Limbs (dedicated locomotor + manipulator pairs — raises tool ceiling)",
+                    Apply = agent => agent.SetLimbDifferentiation(2, 1) },
+                new GeneChoice { Label = "Remain Undifferentiated (shared-purpose appendages — no dedicated manipulators)",
+                    Apply = agent => { /* no change */ } },
+            },
+            DefaultAutoApply = agent => agent.SetLimbDifferentiation(2, 1)
+        });
+
+        // e1_vocal_structure_emergence (§2.8 — flagged missing): develops dedicated vocal/resonance
+        // structures. Anatomical prerequisite for Era 2's Vocal/Auditory CommunicationMedium choice —
+        // an Era 1 biological capability, not the Era 2 cultural adoption decision itself.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_vocal_structure_emergence",
+            Prerequisites = new[] { "GermLayerComplexity", "SensoryOrganDevelopment" },
+            IsEra1Event = true,
+            IsEligible = agent => !agent.VocalApparatus
+                && (agent.LifetimeEats >= agent.locomotorGeneEatThreshold * 3 || agent.StressLevel >= 35f
+                    || GeneEvolutionManager.SessionElapsed >= 125f)
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            Choices = new[]
+            {
+                new GeneChoice { Label = "Develop Vocal/Resonance Structures (enables acoustic signaling — Era 2 vocal communication prerequisite)",
+                    Apply = agent => agent.SetVocalApparatus() },
+                new GeneChoice { Label = "Remain Silent (no dedicated vocal apparatus)",
+                    Apply = agent => { /* no change */ } },
+            },
+            DefaultAutoApply = agent => agent.SetVocalApparatus()
+        });
+
+        // e1_colonial_modularity_emergence: rare non-bilaterian body-plan fork (M1) — a sessile
+        // lineage growing as a linked colony of modules (coral/bryozoan-equivalent) rather than a
+        // single discrete body. Genuinely different topology, not a variant of Bilateral/Radial —
+        // see MorphologyGenerator.BuildColonial. Favored by stable (low-stress) sessile conditions,
+        // matching the real ecological niche these body plans occupy.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_colonial_modularity_emergence",
+            Prerequisites = new[] { "Multicellularity" },
+            IsEra1Event = true,
+            IsEligible = agent => !agent.HasMotility && !agent.IsColonialModular && !agent.IsBiradial
+                && agent.StressLevel < 25f && GeneEvolutionManager.SessionElapsed >= 150f
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            AutoApply = agent => agent.SetColonialModular()
+        });
+
+        // e1_biradial_symmetry_emergence: rare non-bilaterian body-plan fork (M1) — ctenophore-style
+        // dual symmetry plane, aquatic/pelagic-favored. OR-gate sibling of the ordinary motile→
+        // Bilateral read, not a required step.
+        GeneEvolutionManager.Register(new GeneDefinition
+        {
+            Id = "e1_biradial_symmetry_emergence",
+            Prerequisites = new[] { "MotilityEmergence" },
+            IsEra1Event = true,
+            IsEligible = agent => agent.HasMotility && agent.IsAquatic && !agent.IsColonialModular && !agent.IsBiradial
+                && GeneEvolutionManager.SessionElapsed >= 150f
+                && !(Era2Manager.Instance != null && Era2Manager.Instance.IsActive),
+            AutoApply = agent => agent.SetBiradial()
         });
 
         // e1_diversification_explosion: Morphological Complexity Threshold closure AND-gate.
@@ -771,6 +1404,7 @@ public static class GeneCatalog
             Prerequisites = new[] { "ManipulationAppendageDevelopment" },
             IsEligible = agent => Era2Manager.Instance != null && Era2Manager.Instance.IsActive
                 && agent.Manipulation >= ManipulationLevel.Articulated
+                && !agent.IsAquatic // combustion needs atmospheric O2 contact — cannot fire underwater
                 && !agent.IsAnoxicRefugeLineage // anoxic-refuge lineages lack fire-compatible environment
                 && !agent.AcquiredGenes.Contains("FireHeatMastery"),
             Choices = new[]
@@ -954,215 +1588,14 @@ public static class GeneCatalog
             DefaultAutoApply = agent => agent.BecomeProducer()
         });
 
-        // ── Era 3 Decision Nodes (d3_*) ──────────────────────────────────────────
-        // These use the GeneDefinition system but their Apply lambdas modify
-        // CivilizationState via Era3Manager, not agent gene stats.
-        // IsEligible: player agent only (communityId == 0), Era 3 active, prereq acquired.
-
-        GeneEvolutionManager.Register(new GeneDefinition
-        {
-            Id = "d3_trade_policy",
-            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
-                && agent.communityId == 0
-                && Era3Manager.Instance.PlayerCiv.Has("e3_exchange_contact")
-                && !Era3Manager.Instance.PlayerCiv.Has("d3_trade_policy"),
-            Choices = new[]
-            {
-                new GeneChoice { Label = "Open Routes — low tariffs, max exchange",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_trade_policy"); Era3Manager.Instance?.SetTradePolicy(0, 0.05f, 0.9f); Era3Manager.Instance?.OnDecisionResolved("d3_trade_policy"); } },
-                new GeneChoice { Label = "Balanced Tariffs — moderate protection",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_trade_policy"); Era3Manager.Instance?.SetTradePolicy(0, 0.35f, 0.6f); Era3Manager.Instance?.OnDecisionResolved("d3_trade_policy"); } },
-                new GeneChoice { Label = "Embargo — economic isolation",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_trade_policy"); Era3Manager.Instance?.SetTradePolicy(0, 0.95f, 0.15f); Era3Manager.Instance?.OnDecisionResolved("d3_trade_policy"); } },
-            }
-        });
-
-        GeneEvolutionManager.Register(new GeneDefinition
-        {
-            Id = "d3_kinship_policy",
-            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
-                && agent.communityId == 0
-                && Era3Manager.Instance.PlayerCiv.Has("e3_family_norms_emerge")
-                && !Era3Manager.Instance.PlayerCiv.Has("d3_kinship_policy"),
-            Choices = new[]
-            {
-                new GeneChoice { Label = "Nuclear — tight household unit",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_kinship_policy"); Era3Manager.Instance?.SetKinship(0, KinshipPolicy.Nuclear); Era3Manager.Instance?.OnDecisionResolved("d3_kinship_policy"); } },
-                new GeneChoice { Label = "Extended — broader kin networks",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_kinship_policy"); Era3Manager.Instance?.SetKinship(0, KinshipPolicy.Extended); Era3Manager.Instance?.OnDecisionResolved("d3_kinship_policy"); } },
-                new GeneChoice { Label = "Clan — kin coalitions, factionalism risk",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_kinship_policy"); Era3Manager.Instance?.SetKinship(0, KinshipPolicy.Clan); Era3Manager.Instance?.OnDecisionResolved("d3_kinship_policy"); } },
-                new GeneChoice { Label = "CrossLineage — intermarriage, trade openness",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_kinship_policy"); Era3Manager.Instance?.SetKinship(0, KinshipPolicy.CrossLineage); Era3Manager.Instance?.OnDecisionResolved("d3_kinship_policy"); } },
-            }
-        });
-
-        GeneEvolutionManager.Register(new GeneDefinition
-        {
-            Id = "d3_government_transition",
-            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
-                && agent.communityId == 0
-                && Era3Manager.Instance.PlayerCiv.Has("e3_social_stratification")
-                && !Era3Manager.Instance.PlayerCiv.Has("d3_government_transition"),
-            Choices = new[]
-            {
-                new GeneChoice { Label = "Monarchy / Hub Network / Single Queen",
-                    Apply = agent => {
-                        agent.AcquiredGenes.Add("d3_government_transition");
-                        var arch = Era3Manager.Instance!.PlayerCiv.Architecture;
-                        var gov  = arch == CognitiveArchitecture.Distributed ? GovernmentType.HubNetwork
-                                 : arch == CognitiveArchitecture.Collective  ? GovernmentType.SingleQueen
-                                 :                                              GovernmentType.Monarchy;
-                        Era3Manager.Instance.SetGovernment(0, gov);
-                        Era3Manager.Instance.OnDecisionResolved("d3_government_transition"); } },
-                new GeneChoice { Label = "Oligarchy / Mesh Network / Nest Cluster",
-                    Apply = agent => {
-                        agent.AcquiredGenes.Add("d3_government_transition");
-                        var arch = Era3Manager.Instance!.PlayerCiv.Architecture;
-                        var gov  = arch == CognitiveArchitecture.Distributed ? GovernmentType.MeshNetwork
-                                 : arch == CognitiveArchitecture.Collective  ? GovernmentType.NestCluster
-                                 :                                              GovernmentType.Oligarchy;
-                        Era3Manager.Instance.SetGovernment(0, gov);
-                        Era3Manager.Instance.OnDecisionResolved("d3_government_transition"); } },
-                new GeneChoice { Label = "Democracy — broad participation",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_government_transition"); Era3Manager.Instance?.SetGovernment(0, GovernmentType.Democracy); Era3Manager.Instance?.OnDecisionResolved("d3_government_transition"); } },
-                new GeneChoice { Label = "Theocracy — sacred authority",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_government_transition"); Era3Manager.Instance?.SetGovernment(0, GovernmentType.Theocracy); Era3Manager.Instance?.OnDecisionResolved("d3_government_transition"); } },
-            }
-        });
-
-        GeneEvolutionManager.Register(new GeneDefinition
-        {
-            Id = "d3_idea_patronage",
-            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
-                && agent.communityId == 0
-                && Era3Manager.Instance.PlayerCiv.Has("e3_chiefdom")
-                && !Era3Manager.Instance.PlayerCiv.Has("d3_idea_patronage"),
-            Choices = new[]
-            {
-                new GeneChoice { Label = "Culture — art, oral tradition, norms",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_idea_patronage"); Era3Manager.Instance?.SetIdeaPatronage(0, IdeaPatronageType.Culture); Era3Manager.Instance?.OnDecisionResolved("d3_idea_patronage"); } },
-                new GeneChoice { Label = "Religion — cosmological tier",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_idea_patronage"); Era3Manager.Instance?.SetIdeaPatronage(0, IdeaPatronageType.Religion); Era3Manager.Instance?.OnDecisionResolved("d3_idea_patronage"); } },
-                new GeneChoice { Label = "Science — proto-natural philosophy",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_idea_patronage"); Era3Manager.Instance?.SetIdeaPatronage(0, IdeaPatronageType.Science); Era3Manager.Instance?.OnDecisionResolved("d3_idea_patronage"); } },
-                new GeneChoice { Label = "Military — tactical doctrine",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_idea_patronage"); Era3Manager.Instance?.SetIdeaPatronage(0, IdeaPatronageType.Military); Era3Manager.Instance?.OnDecisionResolved("d3_idea_patronage"); } },
-            }
-        });
-
-        GeneEvolutionManager.Register(new GeneDefinition
-        {
-            Id = "d3_war_or_diplomacy",
-            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
-                && agent.communityId == 0
-                && Era3Manager.Instance.PlayerCiv.Has("e3_state_formation")
-                && !Era3Manager.Instance.PlayerCiv.Has("d3_war_or_diplomacy"),
-            Choices = new[]
-            {
-                new GeneChoice { Label = "Organized Warfare — invest in coercive capacity",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_war_or_diplomacy"); Era3Manager.Instance?.SetWarPath(0); Era3Manager.Instance?.OnDecisionResolved("d3_war_or_diplomacy"); } },
-                new GeneChoice { Label = "Diplomacy — formal alliances, open borders",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_war_or_diplomacy"); Era3Manager.Instance?.SetDiplomacyPath(0); Era3Manager.Instance?.OnDecisionResolved("d3_war_or_diplomacy"); } },
-            }
-        });
-
-        GeneEvolutionManager.Register(new GeneDefinition
-        {
-            Id = "d3_domain_investment",
-            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
-                && agent.communityId == 0
-                && Era3Manager.Instance.PlayerCiv.Has("e3_warfare_organized")
-                && !Era3Manager.Instance.PlayerCiv.Has("d3_domain_investment"),
-            Choices = new[]
-            {
-                new GeneChoice { Label = "Kinetic — conventional force",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_domain_investment"); Era3Manager.Instance?.ApplyDomainInvestment(0, 0.25f, 0f, 0f, 0f); Era3Manager.Instance?.OnDecisionResolved("d3_domain_investment"); } },
-                new GeneChoice { Label = "Biochemical — plague & toxin doctrine",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_domain_investment"); Era3Manager.Instance?.ApplyDomainInvestment(0, 0f, 0.25f, 0f, 0f); Era3Manager.Instance?.OnDecisionResolved("d3_domain_investment"); } },
-                new GeneChoice { Label = "Informational — espionage & disinformation",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_domain_investment"); Era3Manager.Instance?.ApplyDomainInvestment(0, 0f, 0f, 0.25f, 0f); Era3Manager.Instance?.OnDecisionResolved("d3_domain_investment"); } },
-                new GeneChoice { Label = "Economic — sanctions & trade leverage",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_domain_investment"); Era3Manager.Instance?.ApplyDomainInvestment(0, 0f, 0f, 0f, 0.25f); Era3Manager.Instance?.OnDecisionResolved("d3_domain_investment"); } },
-            }
-        });
-
-        GeneEvolutionManager.Register(new GeneDefinition
-        {
-            Id = "d3_bioweapon_option",
-            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
-                && agent.communityId == 0
-                && Era3Manager.Instance.PlayerCiv.Has("d3_domain_investment")
-                && Era3Manager.Instance.PlayerCiv.Has("e3_warfare_organized")
-                && !Era3Manager.Instance.PlayerCiv.Has("d3_bioweapon_option"),
-            Choices = new[]
-            {
-                new GeneChoice { Label = "Develop Biochemical Weapons — high domain gain, risk",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_bioweapon_option"); Era3Manager.Instance?.ApplyDomainInvestment(0, 0f, 0.30f, 0f, 0f); Era3Manager.Instance?.OnDecisionResolved("d3_bioweapon_option"); } },
-                new GeneChoice { Label = "Restrict to Defense — no offensive capacity",
-                    Apply = agent => { agent.AcquiredGenes.Add("d3_bioweapon_option"); Era3Manager.Instance?.OnDecisionResolved("d3_bioweapon_option"); } },
-            }
-        });
-
-        GeneEvolutionManager.Register(new GeneDefinition
-        {
-            Id = "d3_caste_labor",
-            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
-                && agent.communityId == 0
-                && Era3Manager.Instance.PlayerCiv.Has("e3_social_stratification")
-                && !Era3Manager.Instance.PlayerCiv.Has("d3_caste_labor"),
-            Choices = new[]
-            {
-                new GeneChoice { Label = "Production Focus — maximize output",
-                    Apply = agent => {
-                        agent.AcquiredGenes.Add("d3_caste_labor");
-                        var arch = Era3Manager.Instance!.PlayerCiv.Architecture;
-                        if (arch == CognitiveArchitecture.Collective) Era3Manager.Instance.SetCasteAllocation(0, 0.7f, 0.2f, 0.1f);
-                        else Era3Manager.Instance.SetSectorAllocation(0, 0.65f, 0.2f, 0.15f);
-                        Era3Manager.Instance.OnDecisionResolved("d3_caste_labor"); } },
-                new GeneChoice { Label = "Military Focus — coercive expansion",
-                    Apply = agent => {
-                        agent.AcquiredGenes.Add("d3_caste_labor");
-                        var arch = Era3Manager.Instance!.PlayerCiv.Architecture;
-                        if (arch == CognitiveArchitecture.Collective) Era3Manager.Instance.SetCasteAllocation(0, 0.3f, 0.2f, 0.5f);
-                        else Era3Manager.Instance.SetSectorAllocation(0, 0.3f, 0.55f, 0.15f);
-                        Era3Manager.Instance.OnDecisionResolved("d3_caste_labor"); } },
-                new GeneChoice { Label = "Culture Focus — ideas and legitimacy",
-                    Apply = agent => {
-                        agent.AcquiredGenes.Add("d3_caste_labor");
-                        var arch = Era3Manager.Instance!.PlayerCiv.Architecture;
-                        if (arch == CognitiveArchitecture.Collective) Era3Manager.Instance.SetCasteAllocation(0, 0.4f, 0.4f, 0.2f);
-                        else Era3Manager.Instance.SetSectorAllocation(0, 0.3f, 0.2f, 0.5f);
-                        Era3Manager.Instance.OnDecisionResolved("d3_caste_labor"); } },
-            }
-        });
-
-        GeneEvolutionManager.Register(new GeneDefinition
-        {
-            Id = "d3_large_initiative_1",
-            IsEligible = agent => Era3Manager.Instance != null && Era3Manager.Instance.IsActive
-                && agent.communityId == 0
-                && Era3Manager.Instance.PlayerCiv.Has("e3_surplus_economy")
-                && !Era3Manager.Instance.PlayerCiv.Has("d3_large_initiative_1"),
-            Choices = new[]
-            {
-                new GeneChoice { Label = "Vaccination Drive — drain disease crises",
-                    Apply = agent => {
-                        agent.AcquiredGenes.Add("d3_large_initiative_1");
-                        Era3Manager.Instance?.PlayerCiv.RecoverResilience(0.10f);
-                        Era3Manager.Instance?.OnDecisionResolved("d3_large_initiative_1"); } },
-                new GeneChoice { Label = "Trade Expansion — open new partner routes",
-                    Apply = agent => {
-                        agent.AcquiredGenes.Add("d3_large_initiative_1");
-                        Era3Manager.Instance?.SetTradePolicy(0, 0.10f, 0.80f);
-                        Era3Manager.Instance?.OnDecisionResolved("d3_large_initiative_1"); } },
-                new GeneChoice { Label = "Monument — culture + legitimacy boost",
-                    Apply = agent => {
-                        agent.AcquiredGenes.Add("d3_large_initiative_1");
-                        var civ = Era3Manager.Instance?.PlayerCiv;
-                        if (civ != null) civ.InvestReligion = Mathf.Min(civ.InvestReligion + 0.15f, 1f);
-                        Era3Manager.Instance?.OnDecisionResolved("d3_large_initiative_1"); } },
-            }
-        });
+        // era3-systems-implementation-spec §4: the 8 orphaned Era 3 Decision Node (d3_*) duplicate
+        // GeneDefinitions formerly here (d3_trade_policy, d3_kinship_policy, d3_government_transition,
+        // d3_idea_patronage, d3_war_or_diplomacy, d3_domain_investment, d3_caste_labor,
+        // d3_large_initiative_1 ×2 for CommerceEngine/LivingReef) are confirmed dead — deleted
+        // outright. GeneEvolutionManager.CheckEligibleGenes bails on Era3.IsActive and skips any "d3_"
+        // -prefixed id by name, so these could never fire via the normal gene-evolution UI path; the
+        // real, live versions are the Era3HUD.cs Card entries sharing the same Ids, resolved through
+        // an entirely different mechanism (DrawCards/Apply). d3_caste_labor's real sibling was itself
+        // deleted this same pass (§2/§4 — wrote to now-deleted SectorMilitary/Caste* fields).
     }
 }

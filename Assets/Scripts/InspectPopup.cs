@@ -55,6 +55,9 @@ public class InspectPopup : MonoBehaviour
         // Block clicks that land inside the HUD panel so tabs don't open a popup.
         if (GameHUD.IsOpenAndContains(guiPos)) return;
 
+        // Block clicks while a gene event or atmosphere-crisis popup is on screen.
+        if (GeneEvolutionManager.IsShowingPopup) return;
+
         // If a popup is already visible and the click lands inside it, let OnGUI
         // handle it (X button). Without this guard, Update() rebuilds the popup at
         // the new click position, moving the X button away before OnGUI can fire it.
@@ -103,6 +106,20 @@ public class InspectPopup : MonoBehaviour
             return;
         }
 
+        // --- Settlement proximity check (Era 3) — checked before agents so clicking a settlement
+        // marker with organisms milling around its base still opens the settlement, not a random
+        // nearby agent; a settlement claim covers a much larger, deliberate radius than an organism. ---
+        if (Era3VisualManager.Instance != null)
+        {
+            var settlement = Era3VisualManager.Instance.FindNearestSettlementAt(hit.point);
+            if (settlement != null)
+            {
+                BuildSettlementPopup(settlement);
+                _visible = true;
+                return;
+            }
+        }
+
         // --- Agent sphere-overlap check at hit point ---
         AgentController nearest = FindNearestAgentAt(hit.point);
         if (nearest != null)
@@ -142,6 +159,30 @@ public class InspectPopup : MonoBehaviour
                 $"Age: {agent.AgeSeconds:F0}s  Stress: {agent.StressLevel:F1}\n" +
                 $"Vision:{agent.visionTrait:F0} Speed:{agent.speedTrait:F0} Str:{agent.strengthTrait:F0}\n" +
                 $"Genes: {genes}";
+    }
+
+    private void BuildSettlementPopup(Era3Manager.Settlement s)
+    {
+        var mgr = Era3Manager.Instance;
+        bool mine = mgr != null && mgr.PlayerCiv != null && s.OwnerCivId == mgr.PlayerCiv.CommunityId;
+        _title = mine ? "★ Your Settlement" : "Settlement";
+        string pathLabel = mgr != null ? mgr.GetCivPath(s.OwnerCivId >= 0 ? s.OwnerCivId : s.FounderCivId).ToString() : "Unknown";
+        string owner = s.OwnerCivId >= 0 ? $"civ {s.OwnerCivId}{(mine ? " (you)" : "")}" : "unaffiliated";
+        string species = s.ContributingCommunities.Count > 1
+            ? $"Multispecies ({s.ContributingCommunities.Count}: {string.Join(", ", s.ContributingCommunities)})"
+            : "Single-species";
+        bool underAttack = mgr != null && mgr.RecentAttackFlash.TryGetValue(s.Id, out float expiry) && Time.time < expiry;
+        string status = s.IsOccupied
+            ? $"OCCUPIED — conquered from civ {s.RecognizedOwnerCivId}, not yet formally recognized (shown hatched on the map)"
+            : "Recognized";
+        _body = $"Name: {s.Name}\n" +
+                $"Type: {s.Tier}  ({pathLabel} path)\n" +
+                $"Population: {s.Population:F0}\n" +
+                $"Owner: {owner}\n" +
+                $"Founded by: civ {s.FounderCivId}\n" +
+                $"Composition: {species}\n" +
+                $"Status: {status}" +
+                (underAttack ? "\n⚠ UNDER ATTACK" : "");
     }
 
     private void BuildLiquidPopup()

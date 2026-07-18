@@ -41,6 +41,7 @@ public class AtmosphereManager : MonoBehaviour
     private DayNightCycle _dayNight;
     private bool _expelledGlutFired;
     private float _gameTimeElapsed; // real seconds since Init() - guards early crisis events
+    private float _breathedGenesisFraction; // stable abiotic floor for geological outgassing
 
     void Awake() => Instance = this;
 
@@ -82,11 +83,8 @@ public class AtmosphereManager : MonoBehaviour
 
         NormalizeFractions();
 
-        RolledBiochemistry = OrganismBiochemistryTable.Roll(RolledType);
-        AssignRespirationRoles(RolledBiochemistry);
-
-        Debug.Log($"[Atmosphere] Type '{RolledType.Name}' | Biochemistry '{RolledBiochemistry.Name}' ({RolledBiochemistry.Backbone}-based): " +
-            string.Join(" | ", _gases.ConvertAll(g => $"{g.Name} {g.Fraction * 100f:F1}% ({g.Role})")));
+        Debug.Log($"[Atmosphere] Type '{RolledType.Name}' | Pressure {PressureBar:F1} bar: " +
+            string.Join(" | ", _gases.ConvertAll(g => $"{g.Name} {g.Fraction * 100f:F1}%")));
     }
 
     /// Layers the rolled biochemistry's Breathed/Expelled gases onto the already-
@@ -102,8 +100,35 @@ public class AtmosphereManager : MonoBehaviour
             breathed = GasDefinition.Make(biochem.BreathedGas, 0.05f);
             _gases.Add(breathed);
         }
+        // Guarantee a genuinely viable starting fraction even if the gas ALREADY existed at a trace
+        // level (e.g. a reducing "Liquid Hydrocarbons"-type genesis roll listing H2/NH3 as minor
+        // trace species at <<1%). Previously only the null (completely absent) case got seeded to
+        // 0.05 — a pre-existing trace amount was promoted to "the thing everyone breathes" unchanged,
+        // so GAS_DEFICIT read fraction≈0 / deficit≈1.00 / drain≈0.4/s for every organism from tick
+        // one, overwhelming any possible absorb rate and wiping out the entire population in
+        // seconds regardless of which gas the biochemistry roll picked. This is what "organisms need
+        // something to breathe from genesis" (see header comment) was actually supposed to guarantee.
+        const float MinViableBreathedFraction = 0.05f;
+        if (breathed.Fraction < MinViableBreathedFraction) breathed.Fraction = MinViableBreathedFraction;
         breathed.Role = GasRole.Breathed;
-        breathed.CrisisLow = 0.10f;
+        // CrisisLow is the depletion threshold — only meaningful if the breathed gas
+        // actually starts abundant. If genesis fraction is already below 10% (exotic
+        // biochemistries like H2-breathing on a CH4-N2 world), set CrisisLow to half
+        // the genesis fraction so the event only fires if the gas is actively depleted,
+        // not just because it was always rare.
+        breathed.CrisisLow = breathed.Fraction >= 0.10f ? 0.10f : breathed.Fraction * 0.5f;
+        _breathedGenesisFraction = breathed.Fraction;
+
+        // Condensation safety: if this gas would immediately condense at the planet's
+        // actual temperature (e.g. NH3 on a 150K world), its saturation fraction is far
+        // below CrisisLow. In that case, lower CrisisLow to below the stable condensed
+        // level so the GREAT GAS EVENT doesn't fire in the first 10 seconds.
+        if (PlanetTemperature.Instance != null)
+        {
+            float satFrac = SaturationFraction(biochem.BreathedGas, PlanetTemperature.Instance.CurrentK, PressureBar);
+            if (satFrac < breathed.CrisisLow)
+                breathed.CrisisLow = satFrac * 0.5f;
+        }
 
         GasDefinition expelled = FindGas(biochem.ExpelledGas);
         if (expelled == null)
@@ -123,6 +148,12 @@ public class AtmosphereManager : MonoBehaviour
         return null;
     }
 
+    // Re-run phase constraints periodically so condensable gases stay capped as
+    // temperature drifts after genesis (genesis-time temp may be above the critical
+    // point, allowing a gas through that later temperature drops would condense).
+    private float _constraintTimer;
+    private const float ConstraintInterval = 10f;
+
     void Update()
     {
         if (_agentSpawner == null) return;
@@ -131,50 +162,100 @@ public class AtmosphereManager : MonoBehaviour
         UVManager.UpdateOzone(this);
         ChemicalNutrientPool.Replenish(Time.deltaTime);
 
+        _constraintTimer += Time.deltaTime;
+        if (_constraintTimer >= ConstraintInterval && PlanetTemperature.Instance != null)
+        {
+            _constraintTimer = 0f;
+            ApplyPhaseConstraints(PlanetTemperature.Instance.CurrentK, PressureBar);
+        }
+
         GasDefinition breathed = GetGasByRole(GasRole.Breathed);
         GasDefinition expelled = GetGasByRole(GasRole.Expelled);
 
-        // Gas exchange is metabolism-specific:
+        // Gas exchange is per-agent, using each agent's individual breathed/expelled gas names.
+        // This allows lineages that evolved AlternativeRespirationPathway to run the reverse
+        // cycle, creating inter-species atmospheric balance (analogous to CO2/O2 cycling).
         //   Chemosynthetic  → no atmospheric exchange (energy from ChemicalNutrientPool only)
-        //   Phototrophic    → solar-dependent reverse exchange (consume Expelled, produce Breathed)
-        //                     this is the driver of the Great Gas Event once photosynthesis evolves
-        //   Heterotrophic   → consume Breathed, produce Expelled (standard respiration)
-        int heterotrophCount = 0, phototrophCount = 0;
-        float phototrophSolarSum = 0f;
-        foreach (var agent in _agentSpawner.ActiveAgents)
-        {
-            if (agent == null) continue;
-            switch (agent.Metabolism)
-            {
-                case MetabolismType.Phototrophic:
-                    phototrophCount++;
-                    if (_dayNight != null)
-                    {
-                        Vector3 normal = (agent.transform.position - agent.planetCenter).normalized;
-                        phototrophSolarSum += _dayNight.SolarExposure(normal);
-                    }
-                    else phototrophSolarSum += 0.5f;
-                    break;
-                case MetabolismType.Heterotrophic:
-                    heterotrophCount++;
-                    break;
-                // Chemosynthetic: no case — zero atmospheric exchange
-            }
-        }
-        float phototrophSolarAvg = phototrophCount > 0 ? phototrophSolarSum / phototrophCount : 0f;
-
+        //   Phototrophic    → solar-dependent reverse exchange (consume their expelled, produce their breathed)
+        //   Heterotrophic   → consume their breathed, produce their expelled
         float dt = Time.deltaTime;
         _gameTimeElapsed += dt;
 
-        // Heterotrophs breathe Breathed gas and exhale Expelled.
-        float consumerExchange = respirationRate * heterotrophCount * dt;
-        if (breathed != null) breathed.Fraction -= consumerExchange;
-        if (expelled != null) expelled.Fraction += consumerExchange;
+        // Accumulate net delta per gas name so we only do one pass through _gases for writes.
+        var gasDeltas = new Dictionary<string, float>();
 
-        // Phototrophics run the exchange in reverse on the day side.
-        float producerExchange = respirationRate * phototrophCount * dt * phototrophSolarAvg;
-        if (expelled != null) expelled.Fraction -= producerExchange;
-        if (breathed != null) breathed.Fraction += producerExchange;
+        foreach (var agent in _agentSpawner.ActiveAgents)
+        {
+            if (agent == null) continue;
+            string agentBreathed = agent.BreathedGasName;
+            string agentExpelled = agent.ExpelledGasName;
+
+            switch (agent.Metabolism)
+            {
+                case MetabolismType.Phototrophic:
+                {
+                    float solar = _dayNight != null
+                        ? _dayNight.SolarExposure((agent.transform.position - agent.planetCenter).normalized)
+                        : 0.5f;
+                    float exchange = respirationRate * dt * solar;
+                    // Phototrophs run the reverse: consume expelled gas, produce breathed gas.
+                    // Guard: if expelled gas is absent the phototroph can't consume it —
+                    // without this, O2=0% worlds get free CO2 injection every frame.
+                    float expelledFrac = FindGas(agentExpelled)?.Fraction ?? 0f;
+                    if (expelledFrac < 0.001f) break;
+                    if (!string.IsNullOrEmpty(agentExpelled))
+                        gasDeltas[agentExpelled] = gasDeltas.GetValueOrDefault(agentExpelled) - exchange;
+                    if (!string.IsNullOrEmpty(agentBreathed))
+                        gasDeltas[agentBreathed] = gasDeltas.GetValueOrDefault(agentBreathed) + exchange;
+                    break;
+                }
+                case MetabolismType.Heterotrophic:
+                {
+                    float exchange = respirationRate * dt;
+                    if (!string.IsNullOrEmpty(agentBreathed))
+                        gasDeltas[agentBreathed] = gasDeltas.GetValueOrDefault(agentBreathed) - exchange;
+                    if (!string.IsNullOrEmpty(agentExpelled))
+                        gasDeltas[agentExpelled] = gasDeltas.GetValueOrDefault(agentExpelled) + exchange;
+                    break;
+                }
+                // Chemosynthetic: no atmospheric exchange — energy from ChemicalNutrientPool only
+                // Mixotrophic: treated as heterotrophic for atmospheric accounting
+                case MetabolismType.Mixotrophic:
+                {
+                    float exchange = respirationRate * dt * 0.5f; // half-rate: mixed strategy
+                    if (!string.IsNullOrEmpty(agentBreathed))
+                        gasDeltas[agentBreathed] = gasDeltas.GetValueOrDefault(agentBreathed) - exchange;
+                    if (!string.IsNullOrEmpty(agentExpelled))
+                        gasDeltas[agentExpelled] = gasDeltas.GetValueOrDefault(agentExpelled) + exchange;
+                    break;
+                }
+            }
+        }
+        // Apply accumulated gas deltas to the atmosphere.
+        foreach (var kv in gasDeltas)
+        {
+            if (kv.Value == 0f) continue;
+            GasDefinition gas = FindGas(kv.Key);
+            if (gas == null)
+            {
+                gas = GasDefinition.Make(kv.Key, 0f, GasRole.Trace);
+                _gases.Add(gas);
+            }
+            gas.Fraction = Mathf.Max(0f, gas.Fraction + kv.Value);
+        }
+
+        // Geological outgassing: primordial reducing gases (H2, CH4, etc.) leak from the
+        // mantle at a slow steady rate on geologically active worlds. This prevents biotic
+        // activity from permanently depletng rare breathed gases below their abiotic floor.
+        // Rate is proportional to deficit (stronger replenishment when more depleted), and
+        // only active before the Great Gas Event — after the event the atmosphere has been
+        // irreversibly altered and the old equilibrium no longer applies.
+        if (!GreatGasEventFired && breathed != null && _breathedGenesisFraction > 0f)
+        {
+            float deficit = _breathedGenesisFraction - breathed.Fraction;
+            if (deficit > 0f)
+                breathed.Fraction += deficit * 0.002f * dt; // ~500s half-life toward genesis level
+        }
 
         NormalizeFractions();
 
@@ -187,8 +268,14 @@ public class AtmosphereManager : MonoBehaviour
         bool gasEventAllowed = false;
         if (DeepTimeClock.Instance != null)
             gasEventAllowed = DeepTimeClock.Instance.CurrentPhaseIndex >= EraTimeline.Era1StartIndex + 2;
-        if (!gasEventAllowed && _gameTimeElapsed >= 45f)
+        if (!gasEventAllowed && _gameTimeElapsed >= 300f)
             gasEventAllowed = true;
+
+        // Hard floor: biological consumption alone cannot deplete breathed gas below 0.4%.
+        // The Great Gas Event requires geological/atmospheric causes (the GOE), not just
+        // chemosynthetic organisms eating all the H2 in early gameplay.
+        if (breathed != null && breathed.Fraction < 0.004f && !GreatGasEventFired)
+            breathed.Fraction = 0.004f;
 
         bool hasLife = _agentSpawner != null && _agentSpawner.ActiveAgents.Count > 0;
         if (!GreatGasEventFired && gasEventAllowed && hasLife && breathed != null && breathed.CrisisLow > 0f && breathed.Fraction < breathed.CrisisLow)
@@ -201,7 +288,7 @@ public class AtmosphereManager : MonoBehaviour
         // NormalizeFractions can let it creep back up via producers, but the world should
         // stay hostile until the population has actually evolved efficient respiration.
         if (GreatGasEventFired && breathed != null)
-            breathed.Fraction = Mathf.Min(breathed.Fraction, 0.05f);
+            breathed.Fraction = Mathf.Min(breathed.Fraction, 0.12f);
 
         if (_crisisFlashTimer > 0f)
             _crisisFlashTimer -= Time.deltaTime;
@@ -262,6 +349,98 @@ public class AtmosphereManager : MonoBehaviour
         return 0f;
     }
 
+    /// Clamps each condensable gas to its thermodynamic saturation fraction at the given
+    /// temperature and total pressure. Called once by SimulationBootstrap after temperature
+    /// is initialized so the genesis composition can't exceed what physics allows.
+    /// Uses Clausius-Clapeyron: P_sat = exp(-ΔHvap/R × (1/T − 1/T_bp)) bar.
+    public void ApplyPhaseConstraints(float tempK, float pressureBar)
+    {
+        if (pressureBar <= 0f) return;
+
+        // Identify condensable gases and their saturation caps.
+        // Returns <1 only for gases with known boiling points (H2O, NH3, SO2, H2S, CH4).
+        var condensable = new System.Collections.Generic.HashSet<string>();
+        float totalExcess = 0f;
+
+        foreach (var gas in _gases)
+        {
+            float maxFrac = SaturationFraction(gas.Name, tempK, pressureBar);
+            if (maxFrac >= 1f) continue; // non-condensable at this T/P
+
+            condensable.Add(gas.Name);
+            if (gas.Fraction > maxFrac)
+            {
+                Debug.Log($"[AtmoConstraint] {gas.Name}: {gas.Fraction * 100f:F1}% → {maxFrac * 100f:F1}% " +
+                          $"(P_sat={maxFrac * pressureBar:F1} bar at {tempK:F0}K / {pressureBar:F1} bar total)");
+                totalExcess += gas.Fraction - maxFrac;
+                gas.Fraction  = maxFrac;
+            }
+        }
+
+        if (totalExcess <= 0f) return;
+
+        // Redistribute the condensed-out fraction to non-condensable gases proportionally.
+        // This keeps total fractions summing to 1 WITHOUT re-inflating the capped gases.
+        // Calling NormalizeFractions() would divide ALL fractions including the capped ones,
+        // putting H2O back above its saturation limit.
+        float nonCondTotal = 0f;
+        foreach (var gas in _gases)
+            if (!condensable.Contains(gas.Name)) nonCondTotal += gas.Fraction;
+
+        if (nonCondTotal > 0f)
+        {
+            foreach (var gas in _gases)
+                if (!condensable.Contains(gas.Name))
+                    gas.Fraction += totalExcess * (gas.Fraction / nonCondTotal);
+        }
+        else
+        {
+            // Edge case: all gases are condensable (unlikely) — fall back to normalize.
+            NormalizeFractions();
+        }
+    }
+
+    /// Called from SimulationBootstrap AFTER ApplyPhaseConstraints, so the biochemistry
+    /// roll sees the actual post-constraint gas composition and temperature.
+    /// Selects a viable backbone + metabolism, then assigns Breathed/Expelled roles.
+    /// After phase constraints condense a breathed gas below its original CrisisLow,
+    /// reset CrisisLow to half the current stable fraction so the GREAT GAS EVENT
+    /// doesn't fire before the simulation even begins.
+    public void RecalibrateCrisisLow()
+    {
+        GasDefinition breathed = GetGasByRole(GasRole.Breathed);
+        if (breathed != null && breathed.CrisisLow > 0f && breathed.Fraction < breathed.CrisisLow)
+            breathed.CrisisLow = breathed.Fraction * 0.5f;
+    }
+
+    public void ApplyBiochemistry()
+    {
+        RolledBiochemistry = OrganismBiochemistryTable.Roll(RolledType, _gases);
+        AssignRespirationRoles(RolledBiochemistry);
+        Debug.Log($"[Biochemistry] '{RolledBiochemistry.Name}' ({RolledBiochemistry.Backbone}-based) | " +
+            string.Join(" | ", _gases.ConvertAll(g => $"{g.Name} {g.Fraction * 100f:F1}% ({g.Role})")));
+    }
+
+    // Clausius-Clapeyron saturation fraction for known condensable species.
+    // Returns 1.0 for non-condensable or unknowns so they are never clamped.
+    private static float SaturationFraction(string name, float tempK, float pressureBar)
+    {
+        // (boilingPointK at 1 bar, ΔHvap/R in K) — matches LiquidDef constants where applicable
+        (float boilK, float dHR) = name switch
+        {
+            "H2O" => (373f, 4892f),
+            "NH3" => (240f, 2814f),
+            "SO2" => (263f, 2994f),
+            "H2S" => (213f, 2612f),
+            "CH4" => (112f,  986f),
+            _     => (0f,    0f),
+        };
+        if (boilK <= 0f) return 1f;
+        float exponent = -dHR * (1f / tempK - 1f / boilK);
+        float pSatBar  = Mathf.Exp(Mathf.Clamp(exponent, -30f, 10f));
+        return Mathf.Clamp01(pSatBar / pressureBar);
+    }
+
     /// Adds `amount` to the named gas's fraction (creating the gas as Trace if absent).
     /// Called by FluidDynamicsManager when sublimation injects a solid directly into gas phase.
     public void AddGasFraction(string name, float amount)
@@ -306,23 +485,35 @@ public class AtmosphereManager : MonoBehaviour
     private void FireGreatGasEvent()
     {
         Debug.Log("[Atmosphere] GREAT GAS EVENT — breathed gas has collapsed! Mass die-off commencing.");
+        AudioManager.Instance?.OnMassExtinction();
         GeneEvolutionManager.QueueAtmosphereEvent("GreatGasEvent");
         _crisisFlashTimer = 4f;
 
-        if (_agentSpawner != null)
+        // Identify the gas that actually collapsed (the current Breathed-role gas) so the cull
+        // is gas-specific rather than a blanket cull. Agents that switched via
+        // AlternativeRespirationPathway now breathe a DIFFERENT gas and are not at risk — this is
+        // the selection reward for having adapted, instead of adaptation being irrelevant.
+        GasDefinition breathed = GetGasByRole(GasRole.Breathed);
+        string collapsedGas = breathed?.Name;
+
+        if (_agentSpawner != null && !string.IsNullOrEmpty(collapsedGas))
         {
-            // Kill ~85% of all consumers immediately — this is an extinction-class event,
-            // not a minor setback. Only a resistant tail survives and adapts.
+            // Extinction-class cull, but only among consumers still breathing the collapsed gas.
             var toKill = new List<AgentController>();
             foreach (var agent in _agentSpawner.ActiveAgents)
-                if (agent != null && !agent.IsProducer && Random.value < 0.85f) toKill.Add(agent);
+                if (agent != null && !agent.IsProducer
+                    && agent.BreathedGasName == collapsedGas
+                    && Random.value < 0.55f)
+                    toKill.Add(agent);
             foreach (var agent in toKill)
-                if (agent != null) agent.Die();
+                if (agent != null) agent.Die(DeathCause.AtmosphericCollapse);
+
+            Debug.Log($"[Atmosphere] Great Gas Event culled {toKill.Count} consumers breathing '{collapsedGas}'; " +
+                      $"agents on alternative respiration survived.");
         }
 
         // Permanently clamp the breathed gas near-zero so the crisis doesn't quietly
         // reverse itself — survivors must evolve their way out, not just wait.
-        GasDefinition breathed = GetGasByRole(GasRole.Breathed);
         if (breathed != null) breathed.CrisisLow = -1f; // disable re-trigger; lock handled in Update
     }
 

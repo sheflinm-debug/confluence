@@ -688,6 +688,11 @@ public class MainMenuManager : MonoBehaviour
             _config.worldSeed = hostedSeed;
         }
 
+        // Solo play never sets worldSeed explicitly — generate one from wall-clock time
+        // so each new game is a distinct world. Multiplayer already has a real seed from host.
+        if (!_isMultiplayerCreation && _config.worldSeed == 0)
+            _config.worldSeed = (int)System.DateTime.Now.Ticks;
+
         LANDiscovery.Instance?.Stop();
         _menuDone = true;
         _pendingLaunch = true; // actual call happens in Update to avoid OnGUI coroutine issues

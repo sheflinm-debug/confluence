@@ -1,0 +1,627 @@
+<title>Era 3 Civilization HUD — Control Audit</title>
+<style>
+:root{
+  --bg:#14171c; --panel:#1c2129; --panel-2:#20262f; --border:#2a303a;
+  --text:#e8eaed; --muted:#8b93a1; --faint:#5b6472;
+  --accent:#4fd8c4; --accent-dim:#2d7a70;
+  --good:#5fb37a; --good-bg:rgba(95,179,122,.12);
+  --dead:#d68a4c; --dead-bg:rgba(214,138,76,.12);
+  --crit:#d9636b; --crit-bg:rgba(217,99,107,.12);
+  --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, "Segoe UI", "Inter", Roboto, Helvetica, Arial, sans-serif;
+}
+:root[data-theme="light"]{
+  --bg:#f5f6f8; --panel:#ffffff; --panel-2:#f0f2f5; --border:#dde1e6;
+  --text:#1a1d22; --muted:#5b6472; --faint:#8a92a0;
+  --accent:#0f9c8a; --accent-dim:#0b7568;
+  --good:#2f8f52; --good-bg:rgba(47,143,82,.10);
+  --dead:#b56a26; --dead-bg:rgba(181,106,38,.10);
+  --crit:#c23f48; --crit-bg:rgba(194,63,72,.10);
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#f5f6f8; --panel:#ffffff; --panel-2:#f0f2f5; --border:#dde1e6;
+    --text:#1a1d22; --muted:#5b6472; --faint:#8a92a0;
+    --accent:#0f9c8a; --accent-dim:#0b7568;
+    --good:#2f8f52; --good-bg:rgba(47,143,82,.10);
+    --dead:#b56a26; --dead-bg:rgba(181,106,38,.10);
+    --crit:#c23f48; --crit-bg:rgba(194,63,72,.10);
+  }
+}
+*{box-sizing:border-box}
+body{
+  background:var(--bg); color:var(--text); font-family:var(--sans);
+  margin:0; line-height:1.5; font-size:14.5px;
+}
+.wrap{display:grid; grid-template-columns:220px 1fr; gap:0; max-width:1280px; margin:0 auto}
+@media (max-width:860px){ .wrap{grid-template-columns:1fr} .nav{position:static; height:auto} }
+
+/* ── Sidebar nav ── */
+.nav{
+  position:sticky; top:0; align-self:start; height:100vh; overflow-y:auto;
+  padding:28px 16px; border-right:1px solid var(--border);
+}
+.nav h1{font-size:15px; font-weight:700; margin:0 0 2px; letter-spacing:.01em}
+.nav .sub{color:var(--muted); font-size:12px; margin:0 0 20px}
+.nav a{
+  display:flex; justify-content:space-between; align-items:center;
+  color:var(--muted); text-decoration:none; font-size:13px; font-weight:600;
+  padding:7px 10px; border-radius:6px; margin-bottom:1px;
+}
+.nav a:hover, .nav a:focus-visible{background:var(--panel-2); color:var(--text)}
+.nav a:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}
+.nav a .n{font-family:var(--mono); font-size:10.5px; color:var(--faint)}
+.nav .navgroup{margin-top:14px; padding-top:14px; border-top:1px solid var(--border)}
+.nav .navgroup:first-child{margin-top:0;padding-top:0;border-top:none}
+.nav .grouplabel{font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:var(--faint); padding:0 10px; margin-bottom:6px}
+
+/* ── Main ── */
+main{padding:36px 40px 80px; min-width:0}
+.hero{margin-bottom:28px}
+.hero h2{font-size:26px; margin:0 0 8px; letter-spacing:-0.01em; text-wrap:balance}
+.hero p{color:var(--muted); max-width:62ch; margin:0}
+
+.stats{display:flex; gap:10px; margin:22px 0 30px; flex-wrap:wrap}
+.stat{
+  background:var(--panel); border:1px solid var(--border); border-radius:10px;
+  padding:12px 16px; min-width:104px;
+}
+.stat .num{font-family:var(--mono); font-size:22px; font-weight:600; font-variant-numeric:tabular-nums}
+.stat .lbl{font-size:11.5px; color:var(--muted); margin-top:2px}
+.stat.good .num{color:var(--good)}
+.stat.dead .num{color:var(--dead)}
+.stat.crit .num{color:var(--crit)}
+
+.callout{
+  background:var(--crit-bg); border:1px solid color-mix(in srgb, var(--crit) 40%, var(--border));
+  border-radius:10px; padding:16px 18px; margin-bottom:34px;
+}
+.callout h3{margin:0 0 8px; font-size:14px; color:var(--crit)}
+.callout ul{margin:0; padding-left:18px; color:var(--text)}
+.callout li{margin-bottom:6px}
+.callout code{color:var(--text)}
+
+section.tab{margin-bottom:44px; scroll-margin-top:20px}
+section.tab h2{
+  font-size:12px; text-transform:uppercase; letter-spacing:.09em; color:var(--accent);
+  margin:0 0 4px; font-weight:700;
+}
+section.tab .tabnote{color:var(--muted); font-size:13px; margin:0 0 16px; max-width:70ch}
+
+.row{
+  display:grid; grid-template-columns:1fr 1fr auto 2.1fr;
+  gap:14px; align-items:start; padding:13px 0; border-top:1px solid var(--border);
+}
+.row:first-of-type{border-top:none}
+@media (max-width:760px){ .row{grid-template-columns:1fr} }
+
+.row .label{font-weight:600; font-size:13.5px}
+.row .label .sub{display:block; font-weight:400; color:var(--muted); font-size:12px; margin-top:1px}
+.row .field{font-family:var(--mono); font-size:12px; color:var(--muted); word-break:break-word}
+.row .gate{font-family:var(--mono); font-size:11.5px; color:var(--faint); word-break:break-word}
+.row .effect{font-size:12.5px; color:var(--text)}
+.row .effect .none{color:var(--faint); font-style:italic}
+
+.pill{
+  display:inline-flex; align-items:center; gap:5px; font-size:10.5px; font-weight:700;
+  text-transform:uppercase; letter-spacing:.05em; padding:3px 8px; border-radius:100px;
+  white-space:nowrap; height:fit-content;
+}
+.pill.real{background:var(--good-bg); color:var(--good)}
+.pill.dead{background:var(--dead-bg); color:var(--dead)}
+.pill.collision{background:var(--crit-bg); color:var(--crit)}
+.pill.action{background:var(--accent-dim); color:#fff}
+:root[data-theme="light"] .pill.action, :root:not([data-theme="dark"]) .pill.action{color:#fff}
+
+.cards-note{
+  background:var(--panel); border:1px solid var(--border); border-radius:10px;
+  padding:14px 16px; margin-top:6px; font-size:12.5px; color:var(--muted);
+}
+.cards-note strong{color:var(--text)}
+
+table.polcat{width:100%; border-collapse:collapse; font-size:12.5px; margin-top:8px}
+table.polcat th{
+  text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.06em;
+  color:var(--faint); font-weight:600; padding:6px 10px; border-bottom:1px solid var(--border);
+}
+table.polcat td{padding:7px 10px; border-bottom:1px solid var(--border); vertical-align:top}
+table.polcat tr:last-child td{border-bottom:none}
+table.polcat .opt{font-weight:600}
+table.polcat .opt .neutral{font-weight:400; color:var(--muted); font-size:11px}
+table.polcat td.gate{font-family:var(--mono); color:var(--muted); white-space:nowrap}
+table.polcat td.effect{font-family:var(--mono); font-size:11.5px; color:var(--text)}
+.tablewrap{overflow-x:auto; border:1px solid var(--border); border-radius:10px; padding:2px 4px}
+
+.island{
+  background:var(--dead-bg); border:1px solid color-mix(in srgb, var(--dead) 35%, var(--border));
+  border-radius:10px; padding:14px 16px; margin-top:14px; font-size:12.5px;
+}
+.island strong{color:var(--dead)}
+
+footer{color:var(--faint); font-size:11.5px; margin-top:60px; padding-top:20px; border-top:1px solid var(--border)}
+</style>
+
+<div class="wrap">
+  <nav class="nav">
+    <h1>Era 3 HUD Audit</h1>
+    <p class="sub">Every control, tab by tab</p>
+
+    <div class="navgroup">
+      <div class="grouplabel">Channel tabs</div>
+      <a href="#econ">Econ <span class="n">10</span></a>
+      <a href="#bio">Bio <span class="n">7</span></a>
+      <a href="#info">Info <span class="n">9</span></a>
+      <a href="#exist">Exist <span class="n">5</span></a>
+      <a href="#coerce">Coerce <span class="n">7</span></a>
+    </div>
+    <div class="navgroup">
+      <div class="grouplabel">Systems tabs</div>
+      <a href="#polity">Polity <span class="n">5</span></a>
+      <a href="#tech">Tech <span class="n">2</span></a>
+      <a href="#ecopol">EcoPol <span class="n">3</span></a>
+      <a href="#polcat">PolCat <span class="n">10 slots</span></a>
+      <a href="#towns">Towns <span class="n">2</span></a>
+    </div>
+    <div class="navgroup">
+      <div class="grouplabel">Cross-cutting</div>
+      <a href="#collisions">Naming collisions</a>
+      <a href="#deadlist">Dead-field summary</a>
+      <a href="#island">Cobb-Douglas island</a>
+    </div>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <h2>What's actually wired up, control by control</h2>
+      <p>Full read of Era3HUD.cs, Era3PolicyCatalog.cs, Era3EcologicalPaths.cs and CivilizationEconomy.cs, cross-checked against every consumer in the codebase. Built to answer one question before any redesign: which sliders do something, and which are decorative.</p>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="num">~65</div><div class="lbl">controls catalogued</div></div>
+      <div class="stat good"><div class="num">13</div><div class="lbl">dead fields</div></div>
+      <div class="stat crit"><div class="num">4</div><div class="lbl">naming collisions</div></div>
+      <div class="stat"><div class="num">PolCat</div><div class="lbl">fully wired, no gaps</div></div>
+    </div>
+
+    <div class="callout">
+      <h3>Read this before wiring anything up</h3>
+      <ul>
+        <li><strong>Signal legibility</strong> — the Info-tab dial (<code>civ.SignalLegibility</code>) is dead, but a Policy Catalog effect of the <em>same name</em> (<code>Var.SignalLegibility</code>) is real and fully wired, computed from State Doctrine Control / Guarded Archives selections instead. Wiring the dead dial without knowing this would create two competing sources of truth.</li>
+        <li><strong>Immune caste investment</strong> — the Bio-tab dial (<code>civ.ImmuneCasteInvest</code>) is dead. A Policy Catalog <em>option</em> with the same label already drives <code>Var.GenDMin</code> for real.</li>
+        <li><strong>Caste allocation dials vs. <code>CasteDiff</code></strong> — the four Collective caste percentage sliders (Forager/Builder/Soldier/Trader) are dead. <code>civ.CasteDiff</code> (a separate Monomorphic/Polymorphic toggle, not a percentage) is real and drives real combat/info modifiers.</li>
+        <li><strong>Military budget readout</strong> — echoes <code>civ.SectorMilitary</code>, which is dead. It looks like a real number because it's displayed, but nothing consumes it.</li>
+      </ul>
+    </div>
+
+    <section class="tab" id="econ">
+      <h2>Econ</h2>
+      <p class="tabnote">Rendered for every civ — the five channel dials apply regardless of Track (see file header comment).</p>
+
+      <div class="row">
+        <div class="label">Economic channel</div>
+        <div class="field">civ.InvestEconomic</div>
+        <div class="gate">ungated</div>
+        <div class="effect"><span class="pill real">Real</span> Tech/idea acquisition rate, resource bracket (0.6×/1.0×/1.4×), channel-weight array, trade demand ratio, war-domain investment, stockpile surplus, culture-spread gate, visual growth-network node count.</div>
+      </div>
+      <div class="row">
+        <div class="label">Agriculture / industry <span class="sub">Individuated, non-A2</span></div>
+        <div class="field">civ.SectorProduction</div>
+        <div class="gate">Individuated ∧ Subtrack≠A2</div>
+        <div class="effect"><span class="pill real">Real</span> — one consumer: feeds Stockpile surplus alongside InvestEconomic.</div>
+      </div>
+      <div class="row">
+        <div class="label">Craft / specialisation <span class="sub">labelled as craft, actually writes SectorMilitary</span></div>
+        <div class="field">civ.SectorMilitary</div>
+        <div class="gate">Individuated, all subtracks</div>
+        <div class="effect"><span class="pill dead">Dead</span> Only the setter and the Coerce-tab "Military budget" readout reference it — no formula reads it.</div>
+      </div>
+      <div class="row">
+        <div class="label">Trade / services</div>
+        <div class="field">civ.SectorCulture</div>
+        <div class="gate">Individuated, all subtracks</div>
+        <div class="effect"><span class="pill real">Real</span> Feeds cultural-radiation / exclave-detection in TickCultureSpread.</div>
+      </div>
+      <div class="row">
+        <div class="label">Foreign openness</div>
+        <div class="field">civ.ForeignOpenness</div>
+        <div class="gate">dial shown to Individuated; field shared by all</div>
+        <div class="effect"><span class="pill real">Real</span> Heavily used — trade ratios, culture radiation, alliance/trade gates.</div>
+      </div>
+      <div class="row">
+        <div class="label">Boom/crash "target" stockpile <span class="sub">actually overwrites current Stockpile, not a target</span></div>
+        <div class="field">civ.Stockpile</div>
+        <div class="gate">Distributed only</div>
+        <div class="effect"><span class="pill real">Real</span> Extremely heavily consumed — upkeep, gifting, tribute, trade, war cost, climate cushioning.</div>
+      </div>
+      <div class="row">
+        <div class="label">Forager / Builder / Soldier / Trader caste split</div>
+        <div class="field">civ.CasteForager/Builder/Soldier/Trader</div>
+        <div class="gate">Collective (Trader needs Polymorphic)</div>
+        <div class="effect"><span class="pill dead">Dead</span> Only the setter reads these — no formula consumes the percentages.</div>
+      </div>
+      <div class="row">
+        <div class="label">Stockpile target <span class="sub">"Biomass Target"</span></div>
+        <div class="field">civ.StockpileTarget</div>
+        <div class="gate">Collective</div>
+        <div class="effect"><span class="pill dead">Dead</span></div>
+      </div>
+      <div class="row">
+        <div class="label">Policy Sectors <span class="sub">Housing / Industry / Research / Culture / Military / Environment</span></div>
+        <div class="field">civ.Economy.Allocation[key]</div>
+        <div class="gate">ungated, every civ</div>
+        <div class="effect"><span class="pill real">Real</span> Cobb-Douglas six-sector engine — see <a href="#island" style="color:inherit">island note</a> below.</div>
+      </div>
+      <div class="cards-note"><strong>Cards:</strong> Trade Policy, Settlement Admission, Formalise Graft-Link, Large Initiative — all confirmed real, each writes ForeignOpenness / MultispeciesSettlements / FormalTradeActive / InvestReligion.</div>
+    </section>
+
+    <section class="tab" id="bio">
+      <h2>Bio</h2>
+      <div class="row">
+        <div class="label">Biological channel</div>
+        <div class="field">civ.InvestBiological</div>
+        <div class="gate">ungated</div>
+        <div class="effect"><span class="pill real">Real</span> Adaptation-tree progress rate, tech channel weight.</div>
+      </div>
+      <div class="row">
+        <div class="label">Parental investment / Pod-bonding investment</div>
+        <div class="field">civ.ParentalInvestment</div>
+        <div class="gate">Individuated A1 or A3</div>
+        <div class="effect"><span class="pill dead">Dead</span></div>
+      </div>
+      <div class="row">
+        <div class="label">Graft-compat threshold</div>
+        <div class="field">civ.GraftCompatThreshold</div>
+        <div class="gate">Distributed</div>
+        <div class="effect"><span class="pill dead">Dead</span></div>
+      </div>
+      <div class="row">
+        <div class="label">CODIT compartmentalisation</div>
+        <div class="field">civ.CompartmentInvest</div>
+        <div class="gate">Distributed</div>
+        <div class="effect"><span class="pill real">Real</span> Halves a drain effect at full investment (Lerp 1→0.4).</div>
+      </div>
+      <div class="row">
+        <div class="label">Reproductive suppression</div>
+        <div class="field">civ.ReproductiveSuppressRatio</div>
+        <div class="gate">Collective</div>
+        <div class="effect"><span class="pill dead">Dead</span></div>
+      </div>
+      <div class="row">
+        <div class="label">Immune caste investment <span class="sub">name collision — see callout</span></div>
+        <div class="field">civ.ImmuneCasteInvest</div>
+        <div class="gate">Collective</div>
+        <div class="effect"><span class="pill dead">Dead</span> <span class="pill collision">Collision</span></div>
+      </div>
+      <div class="row">
+        <div class="label">Public Health Investment</div>
+        <div class="field">— retired slider —</div>
+        <div class="gate">readout → PolCat</div>
+        <div class="effect"><span class="none">Points to Propagation Doctrine, which is real.</span></div>
+      </div>
+      <div class="cards-note"><strong>Cards:</strong> Labor Allocation (partially real — Individuated branch touches real sector fields, Collective branch only writes dead caste fields), Domesticate a Species (real), Plague/Pandemic crisis (real).</div>
+    </section>
+
+    <section class="tab" id="info">
+      <h2>Info</h2>
+      <div class="row">
+        <div class="label">Information channel</div>
+        <div class="field">civ.InvestInformation</div>
+        <div class="gate">ungated</div>
+        <div class="effect"><span class="pill real">Real</span> Administrative Reach capacity bonus, tech channel weight, multiple card effects.</div>
+      </div>
+      <div class="row">
+        <div class="label">Communication infrastructure</div>
+        <div class="field">civ.CommInfraInvest</div>
+        <div class="gate">Individuated</div>
+        <div class="effect"><span class="pill dead">Dead</span></div>
+      </div>
+      <div class="row">
+        <div class="label">Signal legibility <span class="sub">name collision — see callout</span></div>
+        <div class="field">civ.SignalLegibility</div>
+        <div class="gate">Distributed</div>
+        <div class="effect"><span class="pill dead">Dead</span> <span class="pill collision">Collision</span> Real Var.SignalLegibility exists but is computed from Policy Catalog choices, not this dial.</div>
+      </div>
+      <div class="row">
+        <div class="label">Honest-signal weight</div>
+        <div class="field">civ.HonestSignalWeight</div>
+        <div class="gate">Distributed</div>
+        <div class="effect"><span class="pill dead">Dead</span></div>
+      </div>
+      <div class="row">
+        <div class="label">Pheromone-channel richness</div>
+        <div class="field">civ.StigmergicBandwidth</div>
+        <div class="gate">Collective</div>
+        <div class="effect"><span class="pill real">Real</span> Feeds Collective's Info-channel capability modifier.</div>
+      </div>
+      <div class="row">
+        <div class="label">Ritual / pheromone memory <span class="sub">Info-tab copy — distinct from Exist tab's RitualInvestment</span></div>
+        <div class="field">civ.PheroMemoryInvest</div>
+        <div class="gate">Collective</div>
+        <div class="effect"><span class="pill dead">Dead</span></div>
+      </div>
+      <div class="row">
+        <div class="label">Censorship / state control</div>
+        <div class="field">— retired slider —</div>
+        <div class="gate">readout → PolCat</div>
+        <div class="effect"><span class="none">Points to Knowledge Doctrine, which is real.</span></div>
+      </div>
+      <div class="cards-note"><strong>Cards:</strong> Idea Patronage (the one-shot choice effect is real; the stored selection itself has no further reader), Kin-Recognition Disruption (real), Cascade-Error Risk (real).</div>
+    </section>
+
+    <section class="tab" id="exist">
+      <h2>Exist</h2>
+      <div class="row">
+        <div class="label">Existential channel</div>
+        <div class="field">civ.InvestReligion</div>
+        <div class="gate">ungated</div>
+        <div class="effect"><span class="pill real">Real</span> Tech channel weight, multiple card writes.</div>
+      </div>
+      <div class="row">
+        <div class="label">Ritual / pheromone memory</div>
+        <div class="field">civ.RitualInvestment</div>
+        <div class="gate">ungated, all architectures</div>
+        <div class="effect"><span class="pill real">Real</span> Tier-1/2 ritual capability (bypasses the tier-3 belief gate).</div>
+      </div>
+      <div class="row">
+        <div class="label">Orthodoxy <span class="sub">pluralism ↔ orthodox</span></div>
+        <div class="field">civ.OrthodoxyLevel</div>
+        <div class="gate">Individuated</div>
+        <div class="effect"><span class="pill real">Real</span> Cultural-spread resistance formula.</div>
+      </div>
+      <div class="row">
+        <div class="label">Proselytising posture</div>
+        <div class="field">civ.ProselytizePosture</div>
+        <div class="gate">Individuated</div>
+        <div class="effect"><span class="pill dead">Dead</span></div>
+      </div>
+      <div class="cards-note"><strong>Cards:</strong> Kinship Norms (real — feeds diplomacy KinBias), Found Organised Religion (real), Religious Schism crisis (real), Government Form (real — see the separate GeneCatalog.cs copy of this card noted by the audit).</div>
+    </section>
+
+    <section class="tab" id="coerce">
+      <h2>Coerce</h2>
+      <div class="row">
+        <div class="label">Coercive channel</div>
+        <div class="field">civ.InvestCoercive</div>
+        <div class="gate">ungated</div>
+        <div class="effect"><span class="pill real">Real</span> Tech channel weight, Cull-policy investment source.</div>
+      </div>
+      <div class="row">
+        <div class="label">Military budget</div>
+        <div class="field">— readout of SectorMilitary —</div>
+        <div class="gate">n/a</div>
+        <div class="effect"><span class="pill dead">Dead</span> Echoes the dead Econ-tab field.</div>
+      </div>
+      <div class="row">
+        <div class="label">Diplomatic posture <span class="sub">isolationist ↔ expansive</span></div>
+        <div class="field">civ.DiplomaticPosture</div>
+        <div class="gate">Individuated</div>
+        <div class="effect"><span class="pill real">Real</span> Exclave-handling aggression check.</div>
+      </div>
+      <div class="row">
+        <div class="label">Mesh ↔ Hub-centralised <span class="sub">Government, Distributed</span></div>
+        <div class="field">civ.NetworkTopologySlider</div>
+        <div class="gate">Distributed</div>
+        <div class="effect"><span class="pill real">Real</span> Behavioral-fidelity friction cost, variation-score contribution.</div>
+      </div>
+      <div class="row">
+        <div class="label">Nest-cluster ↔ Single-queen <span class="sub">Government, Collective</span></div>
+        <div class="field">civ.CommandCentralization</div>
+        <div class="gate">Collective</div>
+        <div class="effect"><span class="pill real">Real</span> Mirror of the Distributed dial above.</div>
+      </div>
+      <div class="row">
+        <div class="label">War Domains <span class="sub">Kinetic / Biochemical / Informational / Economic</span></div>
+        <div class="field">civ.DomainKinetic, etc.</div>
+        <div class="gate">set via War Domain card, not a direct dial</div>
+        <div class="effect"><span class="pill real">Real</span> Extremely heavily consumed across diplomacy, warfare, exclave, culture.</div>
+      </div>
+      <div class="row">
+        <div class="label">Target Subsystem <span class="sub">Population / Military / Production / Structures</span></div>
+        <div class="field">civ.WarTargetSubsystem</div>
+        <div class="gate">player-only</div>
+        <div class="effect"><span class="pill real">Real</span> Determines what a Declare-War strike or Covert Strike damages.</div>
+      </div>
+      <div class="cards-note"><strong>Cards:</strong> War or Diplomacy?, War Domain, Recognize Occupied Territory, Negotiate Treaty, Sever Graft-Link, Colony Raid, Queen Succession, Secession, Succession/Continuity, Golden Age — all confirmed real.</div>
+    </section>
+
+    <section class="tab" id="polity">
+      <h2>Polity</h2>
+      <p class="tabnote">Relations list, Host/Guest proposals, Federation — all direct-action buttons, not stored dial values.</p>
+      <div class="row">
+        <div class="label">Seek Symbiotic Hosts <span class="sub">toggle + intensity</span></div>
+        <div class="field">civ.SeekSymbioticHosts / …Intensity</div>
+        <div class="gate">Collective ∧ CanUseHostGuestRelation</div>
+        <div class="effect"><span class="pill real">Real</span> Feeds the AI host/guest evaluation on the player's behalf.</div>
+      </div>
+      <div class="row">
+        <div class="label">Declare War / Sue for Peace / Impose Vassalage / Covert Strike / Propose Alliance / Joint Research / Gift / Insult / Steal Tech</div>
+        <div class="field">— direct actions —</div>
+        <div class="gate">CommerceEngine, player-only</div>
+        <div class="effect"><span class="pill real">Real</span> Each calls straight into Era3Manager.</div>
+      </div>
+      <div class="row">
+        <div class="label">Offer Territory / Request Territory</div>
+        <div class="field">SubmitHostGuestProposal(...)</div>
+        <div class="gate">not at war, no existing relation, both sides eligible</div>
+        <div class="effect"><span class="pill real">Real</span></div>
+      </div>
+      <div class="row">
+        <div class="label">Federate</div>
+        <div class="field">TryFederate(...)</div>
+        <div class="gate">accept-probability ≥ 0.5, player-only</div>
+        <div class="effect"><span class="pill real">Real</span></div>
+      </div>
+      <div class="cards-note"><strong>Cards:</strong> Administrative Crisis — real, feeds DecentralizeBonus/SplinterPressure.</div>
+    </section>
+
+    <section class="tab" id="tech">
+      <h2>Tech</h2>
+      <div class="row">
+        <div class="label">Patronize</div>
+        <div class="field">civ.PatronageNodeId</div>
+        <div class="gate">node prereqs unlocked, player-only</div>
+        <div class="effect"><span class="pill real">Real</span> Research-speed multiplier on the patronized node until it expires.</div>
+      </div>
+      <div class="row">
+        <div class="label">Idea Tree Patronize</div>
+        <div class="field">civ.PatronageNodeId</div>
+        <div class="gate">CommerceEngine only</div>
+        <div class="effect"><span class="pill real">Real</span> Same mechanism as Tech's row.</div>
+      </div>
+      <p class="tabnote">This is the tab you asked to redesign into a visual graph — see the closing note.</p>
+    </section>
+
+    <section class="tab" id="ecopol">
+      <h2>EcoPol</h2>
+      <p class="tabnote">Non-CommerceEngine tracks only. Always-reselectable rows, not one-shot Cards — fully wired, no dead options.</p>
+      <div class="row">
+        <div class="label">Resource Policy</div>
+        <div class="field">civ.EcoResourcePolicy</div>
+        <div class="gate">none on the row itself</div>
+        <div class="effect"><span class="pill real">Real</span> Reproduction-rate / predation-success lookup table, Terraformer runaway-risk check, LivingReef Symbiotic-Integration host/guest gate.</div>
+      </div>
+      <div class="row">
+        <div class="label">Conflict Posture</div>
+        <div class="field">civ.EcoConflictPosture</div>
+        <div class="gate">per-option Adaptation node</div>
+        <div class="effect"><span class="pill real">Real</span> Conflict-resolution stance check.</div>
+      </div>
+      <div class="row">
+        <div class="label">Organization</div>
+        <div class="field">civ.EcoOrganization</div>
+        <div class="gate">per-option Adaptation node</div>
+        <div class="effect"><span class="pill real">Real</span> Terraformer runaway-risk extremity multiplier.</div>
+      </div>
+    </section>
+
+    <section class="tab" id="polcat">
+      <h2>PolCat — Policy Catalog</h2>
+      <p class="tabnote">The one system with zero dead options anywhere — every option's stated effect is a confirmed real formula input. Ten slots (five domestic, five foreign) per track; gated by Tech/Idea/Adaptation node, switch cost applies. Individuated's full slot set shown below as the reference shape — Distributed / Collective / Living Reef / the three ecological tracks mirror it with track-flavored option names (see source for exact multipliers).</p>
+      <div class="tablewrap">
+      <table class="polcat">
+        <tr><th>Slot</th><th>Option</th><th>Gate</th><th>Effect (Var)</th></tr>
+        <tr><td>Economic — Domestic</td><td class="opt">Subsistence Distribution <span class="neutral">neutral</span></td><td class="gate">none</td><td class="effect">EconMMax×0.8, ResilienceFloor+0.10, PopGrowth×1.10</td></tr>
+        <tr><td></td><td class="opt">Guild Monopoly</td><td class="gate">I1c</td><td class="effect">EconCapability×1.15, Variation×0.9, Tech×1.1</td></tr>
+        <tr><td></td><td class="opt">Market Liberalization</td><td class="gate">I3d</td><td class="effect">ConnectionStrength×1.3, ResilienceFloor−0.10, Splinter×1.1</td></tr>
+        <tr><td></td><td class="opt">Command Economy</td><td class="gate">I3a</td><td class="effect">EconMMax×1.25, Variation×0.75, BuildRate×1.4, Idea×0.8</td></tr>
+        <tr><td>Genetic — Domestic</td><td class="opt">Kin-Household Norms <span class="neutral">neutral</span></td><td class="gate">none</td><td class="effect">PopGrowth×1.15</td></tr>
+        <tr><td></td><td class="opt">Extended Lineage/Clan</td><td class="gate">I1a</td><td class="effect">AdminReach×1.1</td></tr>
+        <tr><td></td><td class="opt">Public Health Investment</td><td class="gate">T4c</td><td class="effect">GenDMin+0.15, UpkeepDrain+0.05</td></tr>
+        <tr><td></td><td class="opt">Natalist Mobilization</td><td class="gate">I3a</td><td class="effect">PopGrowth×1.30</td></tr>
+        <tr><td>Informational — Domestic</td><td class="opt">Oral Tradition <span class="neutral">neutral</span></td><td class="gate">none</td><td class="effect">Idea×1.1, Tech×0.9</td></tr>
+        <tr><td></td><td class="opt">Scribal Bureaucracy</td><td class="gate">I2b</td><td class="effect">AdminReach×1.15, Tech×1.15</td></tr>
+        <tr><td></td><td class="opt">Open Academy</td><td class="gate">I3b</td><td class="effect">Variation×1.25, Tech×0.95</td></tr>
+        <tr><td></td><td class="opt">State Doctrine Control</td><td class="gate">I3a</td><td class="effect">Variation×0.7, Tech×1.15, SignalLegibility×0.6</td></tr>
+        <tr><td>Existential — Domestic</td><td class="opt">Folk Ritual <span class="neutral">neutral</span></td><td class="gate">none</td><td class="effect">ResilienceRecoveryRate×1.1</td></tr>
+        <tr><td></td><td class="opt">State Religion</td><td class="gate">I2c</td><td class="effect">Variation×0.85</td></tr>
+        <tr><td></td><td class="opt">Sanctioned Pluralism</td><td class="gate">I3b</td><td class="effect">Variation×1.2</td></tr>
+        <tr><td></td><td class="opt">Secular Rationalism</td><td class="gate">I4a</td><td class="effect">Tech×1.1</td></tr>
+        <tr><td>Coercive — Domestic</td><td class="opt">Customary Law <span class="neutral">neutral</span></td><td class="gate">none</td><td class="effect">UpkeepCost×0.9</td></tr>
+        <tr><td></td><td class="opt">Codified Legalism</td><td class="gate">I3a</td><td class="effect">AdminReach×1.15, MaxSustainableForce×1.5, Variation×0.9</td></tr>
+        <tr><td></td><td class="opt">Devolved Federation</td><td class="gate">I4b</td><td class="effect">Splinter×0.7, Variation×1.3, MaxSustainableForce×0.8</td></tr>
+        <tr><td></td><td class="opt">Garrison State</td><td class="gate">T2b+I3a</td><td class="effect">UpkeepCost×1.3, Variation×0.7</td></tr>
+        <tr><td>Economic — Foreign</td><td class="opt">Autarky <span class="neutral">neutral</span></td><td class="gate">none</td><td class="effect">ConnectionStrength×0.3, Diffusion×0.4</td></tr>
+        <tr><td></td><td class="opt">Selective Tariffs</td><td class="gate">I1c</td><td class="effect">EconCapability×1.05</td></tr>
+        <tr><td></td><td class="opt">Open Routes</td><td class="gate">T2c</td><td class="effect">ConnectionStrength×1.4, Diffusion×1.4</td></tr>
+        <tr><td></td><td class="opt">Mercantile Aggression</td><td class="gate">I3d</td><td class="effect">ConnectionStrength×1.15, PassivePolityDrain−0.05</td></tr>
+        <tr><td>Genetic — Foreign</td><td class="opt">Open Contact <span class="neutral">neutral</span></td><td class="gate">none</td><td class="effect">ConnectionStrength×1.3</td></tr>
+        <tr><td></td><td class="opt">Quarantine Regime</td><td class="gate">T4c</td><td class="effect">ConnectionStrength×0.8, GenDMin+0.15</td></tr>
+        <tr><td></td><td class="opt">Bioweapon Doctrine</td><td class="gate">T3c</td><td class="effect">unlocks war maneuvers, no Var</td></tr>
+        <tr><td></td><td class="opt">Xenophobic Closure</td><td class="gate">none</td><td class="effect">ConnectionStrength×0.2</td></tr>
+        <tr><td>Informational — Foreign</td><td class="opt">Free Exchange <span class="neutral">neutral</span></td><td class="gate">none</td><td class="effect">Diffusion×1.5, StealTechDefense×0.7</td></tr>
+        <tr><td></td><td class="opt">Guarded Archives</td><td class="gate">I2b</td><td class="effect">SignalLegibility×0.5, StealTechDefense×1.4, Diffusion×0.7</td></tr>
+        <tr><td></td><td class="opt">Espionage Program</td><td class="gate">T3d</td><td class="effect">StealTechOffense×1.3</td></tr>
+        <tr><td></td><td class="opt">Disinformation Campaign</td><td class="gate">T3d</td><td class="effect">SignalLegibility×0.7</td></tr>
+        <tr><td>Existential — Foreign</td><td class="opt">Non-Interference <span class="neutral">neutral</span></td><td class="gate">none</td><td class="effect">—</td></tr>
+        <tr><td></td><td class="opt">Missionary Outreach</td><td class="gate">I4a</td><td class="effect">Diffusion×1.2</td></tr>
+        <tr><td></td><td class="opt">Doctrinal Supremacy</td><td class="gate">I4a</td><td class="effect">Diffusion×1.5, PassivePolityDrain−0.03</td></tr>
+        <tr><td>Coercive — Foreign</td><td class="opt">Isolationism <span class="neutral">neutral</span></td><td class="gate">none</td><td class="effect">WarThreshold×1.5, UpkeepCost×0.8, AllianceThreshold×1.5</td></tr>
+        <tr><td></td><td class="opt">Balance of Power</td><td class="gate">I3c</td><td class="effect">AllianceThreshold×0.85</td></tr>
+        <tr><td></td><td class="opt">Collective Security</td><td class="gate">I3c</td><td class="effect">AllianceThreshold×0.7</td></tr>
+        <tr><td></td><td class="opt">Hegemonic Expansion</td><td class="gate">I3c+T4a</td><td class="effect">WarThreshold×0.7, PassivePolityDrain−0.05</td></tr>
+      </table>
+      </div>
+      <p class="tabnote" style="margin-top:14px">Distributed, Collective, Living Reef, Terraformer, Bloom Front and Apex Predator each mirror this shape with track-flavored option names and their own gates — full detail in Era3PolicyCatalog.cs lines 336–621.</p>
+    </section>
+
+    <section class="tab" id="towns">
+      <h2>Towns</h2>
+      <div class="row">
+        <div class="label">Settlement rows</div>
+        <div class="field">— navigation only —</div>
+        <div class="gate">n/a</div>
+        <div class="effect"><span class="none">Focuses the camera. Not a gameplay control.</span></div>
+      </div>
+      <div class="row">
+        <div class="label">Cull Wild Cohort</div>
+        <div class="field">CullCohortAtSettlement(...)</div>
+        <div class="gate">player-only, HasCullableCohort</div>
+        <div class="effect"><span class="pill real">Real</span> Suppresses a non-civ cohort's biomass at that settlement.</div>
+      </div>
+    </section>
+
+    <section class="tab" id="collisions">
+      <h2>Naming collisions</h2>
+      <p class="tabnote">Four cases where a dead HUD dial shares a label with something real elsewhere — the most likely source of confusion when deciding what to wire up.</p>
+      <div class="row">
+        <div class="label">Signal legibility</div>
+        <div class="field">civ.SignalLegibility <span style="color:var(--faint)">(dead)</span></div>
+        <div class="gate">vs. Var.SignalLegibility</div>
+        <div class="effect"><span class="pill collision">Collision</span> The real one is computed entirely from Policy Catalog choices (State Doctrine Control, Guarded Archives, Disinformation Campaign) — never from this dial.</div>
+      </div>
+      <div class="row">
+        <div class="label">Immune caste investment</div>
+        <div class="field">civ.ImmuneCasteInvest <span style="color:var(--faint)">(dead)</span></div>
+        <div class="gate">vs. col_prop_immune / ind_prop_health</div>
+        <div class="effect"><span class="pill collision">Collision</span> The Policy Catalog options with near-identical labels drive Var.GenDMin for real.</div>
+      </div>
+      <div class="row">
+        <div class="label">Caste allocation dials</div>
+        <div class="field">CasteForager/Builder/Soldier/Trader <span style="color:var(--faint)">(dead)</span></div>
+        <div class="gate">vs. civ.CasteDiff</div>
+        <div class="effect"><span class="pill collision">Collision</span> CasteDiff is a separate Monomorphic/Polymorphic switch, not a percentage — and it's the one that's real.</div>
+      </div>
+      <div class="row">
+        <div class="label">Ritual / pheromone memory</div>
+        <div class="field">civ.PheroMemoryInvest <span style="color:var(--faint)">(dead, Info tab)</span></div>
+        <div class="gate">vs. civ.RitualInvestment</div>
+        <div class="effect"><span class="pill collision">Collision</span> RitualInvestment (Exist tab, shown to every architecture) is the real one.</div>
+      </div>
+    </section>
+
+    <section class="tab" id="deadlist">
+      <h2>Dead-field summary</h2>
+      <p class="tabnote">Thirteen fields with zero consumers outside the HUD file itself, gathered in one place.</p>
+      <div class="tablewrap">
+      <table class="polcat">
+        <tr><th>Field</th><th>Tab</th><th>Label</th></tr>
+        <tr><td class="effect">civ.SectorMilitary</td><td>Econ / Coerce</td><td>Craft/specialisation dial + Military budget readout</td></tr>
+        <tr><td class="effect">civ.CasteForager</td><td>Econ</td><td>Caste Allocation</td></tr>
+        <tr><td class="effect">civ.CasteBuilder</td><td>Econ</td><td>Caste Allocation</td></tr>
+        <tr><td class="effect">civ.CasteSoldier</td><td>Econ</td><td>Caste Allocation</td></tr>
+        <tr><td class="effect">civ.CasteTrader</td><td>Econ</td><td>Caste Allocation</td></tr>
+        <tr><td class="effect">civ.StockpileTarget</td><td>Econ</td><td>Stockpile target (Collective)</td></tr>
+        <tr><td class="effect">civ.ParentalInvestment</td><td>Bio</td><td>Parental investment / Pod-bonding investment</td></tr>
+        <tr><td class="effect">civ.GraftCompatThreshold</td><td>Bio</td><td>Graft-compat threshold</td></tr>
+        <tr><td class="effect">civ.ReproductiveSuppressRatio</td><td>Bio</td><td>Reproductive suppression</td></tr>
+        <tr><td class="effect">civ.ImmuneCasteInvest</td><td>Bio</td><td>Immune caste investment</td></tr>
+        <tr><td class="effect">civ.CommInfraInvest</td><td>Info</td><td>Communication infrastructure</td></tr>
+        <tr><td class="effect">civ.SignalLegibility</td><td>Info</td><td>Signal legibility (dial)</td></tr>
+        <tr><td class="effect">civ.HonestSignalWeight</td><td>Info</td><td>Honest-signal weight</td></tr>
+        <tr><td class="effect">civ.PheroMemoryInvest</td><td>Info</td><td>Ritual/pheromone memory (Info-tab copy)</td></tr>
+        <tr><td class="effect">civ.ProselytizePosture</td><td>Exist</td><td>Proselytising posture</td></tr>
+      </table>
+      </div>
+    </section>
+
+    <section class="tab" id="island">
+      <h2>The Cobb-Douglas island</h2>
+      <p class="tabnote">Separate from the dead-field list — this one runs, just doesn't connect to anything else.</p>
+      <div class="island">
+        The six-sector economy (Housing / Industry / Research / Culture / Military / Environment) is a genuinely real, self-contained simulation: <strong>Allocation</strong> is set by the Policy Sectors dials, and every tick it computes <strong>MobilizationDrag</strong>, <strong>WarWeariness</strong>, <strong>ExtractionTax</strong>, and per-sector Cobb-Douglas <strong>Output</strong>/<strong>Stock</strong> — all displayed as readouts on the Econ tab. But none of those outputs (GDP, MobilizationDrag, ExtractionTax, WarWeariness) currently feed back out into the rest of Era3Manager's war, trade, or tech formulas. It's a real engine turning in isolation. Worth deciding whether the tab-budget redesign should be the thing that finally connects it to the rest of the game.
+      </div>
+    </section>
+
+    <footer>Built from a full read of Era3HUD.cs (2,142 lines), Era3PolicyCatalog.cs (632), Era3EcologicalPaths.cs (251), and CivilizationEconomy.cs (160), with every field cross-referenced against the whole Assets/Scripts tree.</footer>
+  </main>
+</div>

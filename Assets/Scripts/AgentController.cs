@@ -9,6 +9,18 @@ public enum MetabolismType
     Mixotrophic,    // combines photosynthesis + heterotrophy at ~70% efficiency each
 }
 
+/// Respiration evolutionary sequence (respiration-evolutionary-sequence-fix-spec): every organism
+/// starts undifferentiated/primitive rather than pre-assigned a fully-efficient gas pair; lineages
+/// specialize into a real anaerobic pathway matching locally-available substrate (an OR-gate branch,
+/// not a single swap); aerobic respiration is a late, atmosphere-gated unlock causally downstream of
+/// accumulated photosynthetic O2 output, not available from tick one.
+public enum RespirationTier
+{
+    Primitive,          // spawn state — low-efficiency generic anaerobic metabolism
+    SpecializedAnaerobic, // evolved into a real pathway (Methanogenesis/SulfateReduction/etc.) matching local substrate
+    Aerobic,            // late unlock, gated on atmospheric O2 — highest yield, historically came to dominate
+}
+
 // Manipulation tier: how dexterous the organism's appendages are (Era 2 input).
 /// Locomotion medium axis (morphology axis M4). New values added by gene events.
 public enum LocomotionMedium
@@ -44,6 +56,77 @@ public enum NeuralComplexityStage
     NerveNet          = 1, // distributed nerve net (jellyfish equivalent)
     NerveCord         = 2, // centralized cord / ganglia (flatworm/annelid equivalent)
     GanglionicCephalization = 3, // cephalic ganglion — proto-brain (pre-vertebrate)
+    HighlyCentralized = 4, // appearance-generation-spec §2.2 M7 ceiling value — dorsal-CNS-equivalent
+                           // or beyond; this is the value that gates the Era 2 intelligence track
+                           // (§3.3). Left unfired by any Era 1 event by design: crossing into this
+                           // tier is an Era 2/3 concern (Cognitive Architecture assignment), not an
+                           // Era 1 one — appended here only so the axis's full value range exists.
+}
+
+/// Segmentation axis (morphology axis M2, appearance-generation-spec §2.2). Tagmatized requires
+/// Metameric as a hard prerequisite — a body cannot fuse segments into functional tagmata (head/
+/// thorax/abdomen) before it has repeated segments to fuse in the first place.
+public enum SegmentationType
+{
+    Unsegmented,           // default — most Era 1 body plans never segment at all
+    Metameric,             // repeated body segments (annelid-equivalent) — e1_metameric_segmentation
+    Tagmatized,            // segments fused into specialized functional regions — e1_tagmatization
+    SecondarilySimplified, // segmented ancestor, smoothed-over descendant — rare reversion, small-bodied lineages
+}
+
+/// Primary sensory modality (M5/M6 — appearance-generation-spec §2.2). Distinct from CommunicationMedium
+/// (Era 2 §6.2, outward signaling) — this axis is about dominant sensory *input* channel. Multimodal
+/// is a ceiling reached only after 2+ other modalities have already been acquired, not a starting option.
+public enum SensoryModality
+{
+    Chemosensory,       // default — taste/smell gradients, the most primitive detection channel
+    Visual,             // e1_primary_sensory_modality (Visual choice) — requires developed vision
+    Mechanosensory,     // e1_primary_sensory_modality (Mechanosensory choice) — vibration/pressure, aquatic-favored
+    Electroreceptive,   // e1_primary_sensory_modality (Electroreceptive choice) — aquatic, rare
+    Thermoreceptive,    // e1_primary_sensory_modality (Thermoreceptive choice) — high thermal-variance habitats
+    Magnetoreceptive,   // e1_primary_sensory_modality (Magnetoreceptive choice) — long-range dispersers
+    Multimodal,         // e1_multimodal_sensory_integration — requires 2+ prior modalities acquired
+}
+
+/// Feeding apparatus (M9, appearance-generation-spec §2.2) — HOW an organism physically takes in
+/// food. Distinct from MetabolismType (the energy-source axis): a Heterotrophic organism can be a
+/// grazer, a detritivore, an active predator, or a parasite, and this axis tracks which.
+public enum FeedingApparatus
+{
+    FilterPassive,   // default — passive uptake, no active feeding behavior yet
+    Grazer,          // e1_feeding_apparatus_specialization — steady consumption of abundant low-defense food
+    Detritivore,     // e1_feeding_apparatus_specialization — consumes dead organic matter, low-competition niche
+    PredatorActive,  // e1_feeding_apparatus_specialization — requires motility + Consumer metabolism
+    Parasitic,       // e1_feeding_apparatus_specialization — rare, requires extreme resource scarcity
+    Chemosymbiotic,  // e1_feeding_apparatus_specialization — requires Chemosynthetic metabolism
+    Photosymbiotic,  // e1_feeding_apparatus_specialization — requires Phototrophic/Mixotrophic metabolism
+}
+
+/// Integument elaboration (M10, appearance-generation-spec §2.2) — surface texture/type only; color
+/// and bioluminescence remain a separate (still-unimplemented, circulatory-chromophore-spec) concern.
+/// Chitin/ShellExternal/Crystalline mirror an existing BodyPlanType; FilamentsFur is the one genuinely
+/// independent branch (a thermoregulatory covering, not a structural-support byproduct).
+public enum IntegumentType
+{
+    BareMucous,    // default
+    Scales,        // e1_integument_elaboration
+    Chitin,        // e1_integument_elaboration — mirrors BodyPlanType.Exoskeleton
+    FilamentsFur,  // e1_integument_elaboration — thermoregulatory, favored by hardiness specialists
+    ShellExternal, // e1_integument_elaboration — mirrors BodyPlanType.Shell
+    Crystalline,   // e1_integument_elaboration — mirrors BodyPlanType.Crystalline
+}
+
+/// Size class (M8, appearance-generation-spec §2.2) — a tiered read of the organism's continuous
+/// physical scale (transform.localScale.x), not independent tracked state, per the spec's "state is
+/// derived, not authored" principle. See AgentController.BodySizeClass for the derivation + the
+/// M3-driven ceiling (unprotected body plans cap below Mega).
+public enum SizeClass
+{
+    Micro  = 0,
+    Small  = 1,
+    Medium = 2,
+    Large  = 3,
+    Mega   = 4,
 }
 
 public enum HabitatMedium
@@ -53,15 +136,22 @@ public enum HabitatMedium
     Air,  // airborne (flying, future era) — not yet implemented, treated as Land
 }
 
-/// Protective structure evolved at the Cambrian body-plan fork (Era 1).
-/// Inherited by all offspring; drives stat trade-offs and Era 2 manipulation bonuses.
+/// Protective structure evolved at the Cambrian body-plan fork (Era 1) — appearance-generation-spec
+/// §2.7's M3 "structural support" axis. Inherited by all offspring; drives stat trade-offs, Era 2
+/// manipulation bonuses, and (MorphologyGenerator) the rig/silhouette treatment. Exoskeleton/Shell
+/// map to the spec's exo-chitin/exo-mineral; Endoskeleton kept as the EndoCartilage precursor value
+/// (renaming the enum member would touch every existing reference for no behavioral gain) with
+/// EndoMineralized as its follow-on upgrade.
 public enum BodyPlanType
 {
-    None,
-    Exoskeleton, // hardened cuticle: str+, hard+, speed-
-    Shell,       // mineralized test: hard++, speed--
-    Endoskeleton,// internal skeleton: str++, speed neutral/+; requires germ layers
-    SoftBody,    // no protection: speed+
+    None,           // hydrostatic — starting value, remains valid permanently
+    Exoskeleton,    // exo-chitin: hardened cuticle: str+, hard+, speed-
+    Shell,          // exo-mineral: mineralized test: hard++, speed--
+    Endoskeleton,   // endo-cartilage: internal support-tissue precursor: str++, speed neutral/+; requires germ layers
+    SoftBody,       // no protection: speed+
+    EndoMineralized,// endo-cartilage's mineralized upgrade — requires Endoskeleton first (e1_endoskeleton_mineralization)
+    MixedArmor,     // dermal ossification over an existing exoskeleton — requires extreme sustained predation
+    Crystalline,    // silicon-backbone only, hard-gated at backbone-chemistry level, not a lineage choice
 }
 
 public enum BiologicalSex
@@ -86,20 +176,25 @@ public class AgentController : MonoBehaviour
 
     [Header("Sensing")]
     public float eatRadius = 0.5f;
+    // Body-contact distance for MATING — an organism must physically reach a partner to reproduce,
+    // not conceive at sense range. Scales a little with body size so larger organisms "touch" from
+    // slightly further (their bodies are bigger), floored at eatRadius so it's never tighter than the
+    // predation contact tolerance. TUNABLE.
+    private float MatingContactRadius => Mathf.Max(eatRadius, transform.localScale.x * 1.5f);
 
     [Header("Wander")]
     public float wanderTurnRate = 60f; // max degrees/sec random heading change
 
     [Header("Energy efficiency traits (Tier 1 lineage, evolvable via SI drift)")]
-    [Tooltip("Photosynthetic conversion efficiency. Seeded at ~15% of the C3 ceiling (0.046). SI drift pushes it upward over generations.")]
-    public float photoEfficiencySpawn = 0.007f;  // 15% of 0.046 ceiling
+    [Tooltip("Photosynthetic conversion efficiency at spawn. Matched to chemoEfficiencySpawn: an organism's enzymatic efficiency is a property of the lineage, not the energy source, so a chemo→photo switch should not reset it 20× lower. The day/night duty cycle (photoAcq→0 at night) is what balances the two strategies, not a lower base efficiency.")]
+    public float photoEfficiencySpawn = 0.50f;  // starting value; evolves up to PhotoEfficiencyCeiling
     [Tooltip("Chemosynthetic uptake efficiency. Tunable design constant ceiling.")]
-    public float chemoEfficiencySpawn = 0.15f;
+    public float chemoEfficiencySpawn = 0.50f;
     [Tooltip("Heterotrophic assimilation efficiency base [0.2, 0.9]. Carnivore-biased mid-range default.")]
     public float assimilationEfficiencySpawn = 0.55f;
 
     // Efficiency property ceilings — SI drift cannot exceed these.
-    public const float PhotoEfficiencyCeiling  = 0.046f; // C3 photosynthesis theoretical max
+    public const float PhotoEfficiencyCeiling  = 0.80f;  // matched to ChemoEfficiencyCeiling so carried-over/inherited photo efficiency isn't clamped down to a non-viable band
     public const float ChemoEfficiencyCeiling  = 0.80f;  // tunable design constant
     public const float AssimEfficiencyMin      = 0.20f;
     public const float AssimEfficiencyMax      = 0.90f;
@@ -119,6 +214,18 @@ public class AgentController : MonoBehaviour
     public float temperaturePreference = 50f; // preferred local temperature
     public float moisturePreference = 50f;    // preferred local moisture
 
+    // ── era3-primitives-spec §2: real behavioral axes, not proxied from unrelated systems ──────
+    // Interference-competition disposition — contest/deny resources rather than avoid/share. NOT
+    // predation (a feeding strategy); this is a real evolvable axis with its own selection pressure
+    // (see ResolveActivityBudget's contest draw + the scarcity-conditioned uptake bonus below), so
+    // Era 3's Aggression readout is a genuine consequence of Era 1/2 evolution, not an alias.
+    public float contestPropensity = 30f;
+    // Boldness–shyness axis (behavioral ecology's best-documented animal-personality trait). Governs
+    // willingness to forage exposed, disperse into the unknown, and skip fleeing early — real
+    // frequency/environment-dependent selection (bold pays when resources are rich/predation is low;
+    // shy pays under heavy predation), so this should oscillate across a run rather than converge.
+    public float boldness = 50f;
+
     [Header("Trait -> world-unit mapping")]
     public float minSenseRadius = 2f;
     public float maxSenseRadius = 16f;
@@ -126,24 +233,36 @@ public class AgentController : MonoBehaviour
     public float maxMoveSpeed = 5f;
 
     [Header("Reproduction")]
-    public int eatsToReproduce = 3;
+    public int eatsToReproduce = 1;
     public float mutationStdDev = 5f; // offspring trait drift from parent, per Section 6a drift framing
     public float offspringSpawnOffset = 1.5f;
 
     [Header("Lifespan")]
     [Tooltip("Mean maximum age in seconds before senescence death. Actual lifespan is randomized ±40% per individual so generations overlap rather than dying in lockstep.")]
-    public float meanLifespan = 120f;
+    public float meanLifespan = 45f;
     [Tooltip("Hardiness above 50 extends max lifespan (up to +25%); below 50 shortens it (down to -25%). Models the generalist/specialist tradeoff: hardy generalists are longer-lived.")]
     public float lifespanHardinessInfluence = 0.25f;
 
     [Header("Starvation / Solar energy")]
     public float starvationTime = 15f; // seconds without eating before death (consumers)
     [Tooltip("Max solar energy a producer can accumulate (seconds of survival).")]
-    public float maxSolarEnergy = 30f;
+    public float maxSolarEnergy = 3f;
     [Tooltip("Rate at which producers gain solar energy on the day side (energy/sec at full solar exposure).")]
     public float solarChargeRate = 2f;
     [Tooltip("Rate at which producers drain energy at night (energy/sec).")]
     public float solarDrainRate = 0.5f;
+    [Tooltip("Beer-Lambert light extinction per unit liquid depth. Higher = light dies off faster underwater, pushing phototrophs toward the shallows. TUNABLE.")]
+    public float PhoticExtinctionCoeff = 0.10f;
+    [Tooltip("Fraction of a non-motile organism's drift step that survives when it would cross into a fatal medium (0 = hard anchor, 1 = no boundary). Keeps sessile life near its niche. TUNABLE.")]
+    public float HabitatReturnBias = 0.05f;
+    [Tooltip("Global multiplier on MOTILE organism movement speed. Lower = slower traversal of the world. TUNABLE.")]
+    public float globalMoveSpeedScale = 0.45f;
+    // Fraction of a motile step allowed when it would carry the organism across the shoreline into
+    // its non-viable medium. Strong block (most species stay in their medium), not absolute (rare
+    // amphibious crossings still possible). TUNABLE.
+    private const float MediumCrossBias = 0.10f;
+    [Tooltip("How strongly visual size reflects the organism's strength trait (species size class). 0 = all one size, 1 = strong span. TUNABLE.")]
+    public float sizeTraitInfluence = 0.5f;
 
     [Header("Climate fitness pressure")]
     [Tooltip("Baseline strength of climate-mismatch's effect on starvation rate, before hardiness scaling.")]
@@ -151,6 +270,11 @@ public class AgentController : MonoBehaviour
     [Tooltip("How much hardiness can widen (specialist) or narrow (generalist) the baseline range above.")]
     public float hardinessRangeMin = 0.3f; // multiplier at hardiness=100 (generalist - shallow penalty)
     public float hardinessRangeMax = 1.6f; // multiplier at hardiness=0 (specialist - steep penalty)
+    [Tooltip("Half-width of the zero-discomfort tolerance PLATEAU (on the 0-100 climate scale). Within " +
+             "±band of the preferred value the organism is fully comfortable; only beyond it does mismatch " +
+             "bite. Scales with hardiness: specialists (stenotherms) get Narrow, generalists (eurytherms) Wide.")]
+    public float toleranceBandNarrow = 10f; // hardiness = 0  (stenotherm)
+    public float toleranceBandWide   = 35f; // hardiness = 100 (eurytherm)
 
     [Header("Comfort-seeking (territoriality)")]
     [Tooltip("How strongly discomfort biases wander direction toward better-matching climate.")]
@@ -249,9 +373,15 @@ public class AgentController : MonoBehaviour
     // an opposite-sex mate in range and blends both parents' traits before drift is applied.
     public bool IsSexual { get; private set; }
 
-    // Biological sex: Asexual until IsSexual is true, then Male or Female assigned when
-    // BecomeSexual() fires. Re-rolled randomly for each offspring so sex ratio drifts
-    // naturally and can create the imbalance that triggers SequentialHermaphroditism.
+    // Sexual DIFFERENTIATION: the lineage has split into separate sexes (male/female), a prerequisite
+    // for — and earlier than — sexual REPRODUCTION (IsSexual). A differentiated organism HAS a sex but
+    // may still reproduce asexually until it also adopts sexual reproduction. Invariant: IsSexual ⇒
+    // IsDifferentiated.
+    public bool IsDifferentiated { get; private set; }
+
+    // Biological sex: Asexual until DifferentiateSex() assigns Male or Female (50/50). Re-rolled per
+    // offspring (among differentiated lineages) so the sex ratio drifts naturally and can create the
+    // imbalance that triggers SequentialHermaphroditism.
     public BiologicalSex Sex { get; private set; } = BiologicalSex.Asexual;
 
     // Set by the SequentialHermaphroditism gene. When true, organism autonomously switches
@@ -261,6 +391,10 @@ public class AgentController : MonoBehaviour
 
     // Which spawned community this agent belongs to (0 = player community).
     public int communityId;
+
+    // Monotonic identity — set by AgentSpawner immediately after Init(); never reused.
+    // Use this as the dictionary key and log identifier, NOT the GameObject name.
+    public long AgentId { get; set; } = -1;
 
     // Atmospheric adaptation (speciation): the gas-fraction mix this lineage is adapted
     // to, locked in at genesis and re-locked whenever AttemptAtmosphericSpeciation fires.
@@ -276,6 +410,13 @@ public class AgentController : MonoBehaviour
     // push a lineage toward sexual reproduction, not just age + lifetime eats.
     public float StressLevel { get; private set; }
     private bool _stressRegistered;
+
+    /// 0-1 how favorable this agent's CURRENT location is against its own tolerance profile —
+    /// reuses the existing StressLevel adversity signal (already blends climate/atmospheric/UV/
+    /// pressure/thermal-cycle/starvation discomfort) rather than a second scoring system. Drives
+    /// TerritorialityManager's settle/roam decision: high favorability trends a community toward
+    /// LooseRange/StrictSite, low favorability keeps it Nomadic.
+    public float LocalFavorability => 1f - StressLevel / 100f;
 
     // 0-100 randomized per agent at spawn; how tolerant this individual is of its OWN
     // accumulated stressLevel (resilient generalist vs fragile specialist) - same
@@ -297,9 +438,17 @@ public class AgentController : MonoBehaviour
     /// medium-mismatch fitness penalty.
     public HabitatMedium CurrentMedium { get; private set; } = HabitatMedium.Sea;
 
+    // Cached liquid depth at this agent's position, refreshed once per Update (single vertex
+    // scan reused by medium classification, photic-zone attenuation, and drift logic).
+    private float _currentLiquidDepth;
+
     // True if this lineage is aquatic (adapted to live in liquid). Set at spawn for early
     // eras; transitions to false when a TerrestrialAdaptation gene is acquired (future).
     private bool _isAquatic = true;
+    /// True if this lineage's locked habitat is aquatic (all life starts here); false once it has
+    /// colonized land (LandColonization gene). Public so gene eligibility (e.g. Fire Mastery, which
+    /// requires actually being ON land) and the HUD can read it.
+    public bool IsAquatic => _isAquatic;
 
     private Vector3 _heading; // tangent direction, world space
     private CorpseSpawner _corpseSpawner;
@@ -307,9 +456,49 @@ public class AgentController : MonoBehaviour
     private int _eatsSinceReproduction;
     private float _timeSinceLastMeal;
     private int _lifetimeEats;
+    private float _reproCooldownTimer;
     private bool _traitsRegistered;
     private float _solarEnergy; // phototrophic producers use this
     private float _chemEnergy;  // chemosynthetic organisms use this
+    // Most recent chemosynthetic gross absorption rate (energy/s), cached each tick a chemosynthetic
+    // organism runs its metabolism. Read by IsPhotosynthesisLocallyViable so a lineage only abandons
+    // chemosynthesis for photosynthesis when photo actually OUT-YIELDS the chemo it's giving up — not
+    // merely when photo covers demand. Without this, organisms on chemo-rich worlds (rich vents, high
+    // SO2, etc.) switch to a strictly-worse photo income and slowly starve. 0 until first chemo tick.
+    private float _lastChemoAbsorb;
+
+    /// 0–1 fraction of max energy reserve; used by GameLog periodic snapshots.
+    public float EnergyFraction => _chemEnergy / Mathf.Max(maxSolarEnergy, 0.001f);
+
+    /// Last-computed net energy (u/s): income minus demand. Positive = thriving, negative = starving.
+    public float NetEnergy { get; private set; }
+
+    public float MaxLifespanSeconds => _maxLifespan;
+    public int MorphSeedValue => _morphSeed;
+    public float ChemEnergyRaw => _chemEnergy;
+    public float SolarEnergyRaw => _solarEnergy;
+
+    // Shared scratch buffer for AgentSpawner.QueryNearby results. Static/shared (not per-instance)
+    // because Unity is single-threaded and no proximity-scan method here calls another one
+    // mid-loop — each call fills the buffer and fully consumes it before returning, so reuse across
+    // every agent's Update() this frame is safe and avoids a per-call List allocation.
+    private static readonly List<AgentController> _queryBuffer = new List<AgentController>();
+
+    // ── Sense-scan throttling (perf) ──────────────────────────────────────────────────────────
+    // The prey/mate/threat proximity scans are the dominant per-agent cost at high population (one,
+    // FindNearestMate, even scanned the whole population = O(n²)). None of them need 60 Hz — a target
+    // acquired ~7 times/second is indistinguishable in movement. Each scan is memoized per SENSE CYCLE:
+    // it recomputes at most once per cycle and returns the cached target (validated) otherwise.
+    // Movement steers toward the cached target every frame; contact resolution (eat/mate) still runs
+    // against LIVE positions each frame, so nothing conceives or feeds off a stale snapshot.
+    private const float SenseInterval = 0.15f;   // ~6.7 Hz target reacquisition
+    private float _senseTimer;                    // phased at Init so agents don't all scan together
+    private int _senseCycle;                       // advances each SenseInterval
+    private int _preyCycle = -1, _mateCycle = -1, _threatCycle = -1;
+    private AgentController _cachedPrey, _cachedMate, _cachedThreat;
+    private float _geneCheckElapsed;               // real time accumulated between throttled gene scans
+
+    private static AgentController ValidCached(AgentController c) => (c != null && c.gameObject != null) ? c : null;
 
     // Simulated body mass (game-unit kg). Drives Kleiber BMR demand and biomass transfer
     // on predation. Initialized from era scale; grows/shrinks with sustained net balance.
@@ -325,6 +514,48 @@ public class AgentController : MonoBehaviour
 
     // Environmental pressure variables — refreshed every 3 s to avoid per-frame O(N) cost.
     private float _pressureRefreshTimer;
+    private bool _metabolismLogged; // fires one diagnostic log per agent on first chemo tick
+    private bool _photoMetabolismLogged; // fires one PhotoMeta log per agent on first phototrophic tick
+    private bool _updateLogged;     // fires one diagnostic log per agent on first Update tick
+    private float _reproTimer;      // fallback reproduction timer — fires TryReproduce every 20s
+    private bool _reproFallbackLogged; // one diagnostic log the first time the fallback path fires
+    private bool _dispersalLogged;  // one diagnostic log the first time this agent begins a dispersal journey
+
+    // ── Density-dependent dispersal (dispersal-colonization spec) ─────────────────────────
+    // When a lineage saturates its local patch, well-fed motile members commit to a directed
+    // long-range journey AWAY from the local cluster toward open space, at an energy cost — so a
+    // resource-secure population seeds new, distant population centers instead of staying pinned to
+    // its spawn cluster forever. Non-motile life spreads via a passive prevailing drift instead.
+    private int _localSameCommunity;      // same-community neighbors within scan radius (set in UpdatePressureVariables)
+    private float _dispersalTimer;        // >0 while actively on a dispersal journey
+    private float _dispersalCheckTimer;   // throttles entry checks
+    private Vector3 _dispersalDir;        // world-space unit direction of the current journey
+    public bool IsDispersing => _dispersalTimer > 0f;
+    private const int   DispersalCrowdCap         = 8;     // same-community neighbors within scan radius that = locally saturated
+    private const float DispersalPressureThresh   = 0.75f; // fraction of local cap that triggers dispersal pressure (TUNABLE)
+    private const float DispersalChancePerCheck   = 0.25f; // probability per check once pressure exceeds threshold
+    private const float DispersalCheckInterval    = 4f;    // seconds between entry checks
+    private const float DispersalDuration         = 25f;   // seconds a committed journey lasts
+    private const float DispersalEnergyCostPerSec = 0.02f; // journey metabolic cost — real risk, not a free teleport
+    private const float PassiveDispersalBias      = 0.12f; // small prevailing-current drift weight for non-motile life (Issue 1b)
+
+    // ── Predation economics (size/strength/hardiness → cost & yield) ──────────────────────
+    // A successful kill's net energy shrinks as prey grows larger/tougher RELATIVE to the predator:
+    // small weak prey are cheap efficient meals, near-own-size hardy prey are barely worth the
+    // effort. Bounded to [0, gross] so a kill never costs more than it yields — the real *risk* of
+    // big prey is the counter-kill in ResolvePredatorAttack, not negative energy here. TUNABLE:
+    // these need calibration against real ChemoMeta/PhotoMeta net values from a run with confirmed
+    // predation activity (see the [Corpse] SCAVENGE / predation logs) before final tuning.
+    private const float PredationCostFraction  = 0.5f;  // yield share lost subduing an equal-size, equal-tough prey
+    private const float PredationCostExponent  = 1.2f;  // how steeply cost rises with prey/predator mass ratio
+    // Fallback reproduction cadence. The primary reproduction path only fires after the energy
+    // reserve completes THREE 90%-fill cycles (eatsToReproduce). On slow-metabolism exotic worlds
+    // (cold, low stellar flux, sparse substrate) an agent can have healthy positive net energy yet
+    // never complete three fills within its lifespan — producing zero births despite good energy.
+    // This timer guarantees a mature, well-fed agent still attempts reproduction on a fixed cadence.
+    private const float ReproFallbackInterval   = 20f;   // seconds between fallback attempts
+    private const float ReproFallbackEnergyFrac = 0.6f;  // reserve fraction required to attempt
+    private const float ReproFallbackMinAgeFrac = 0.15f; // must be at least this far into its lifespan
     private const float PressureRefreshInterval = 3f;
     /// 0 = abundant chemical energy; 1 = substrate fully depleted (drives metabolic innovation).
     public float ResourceScarcity  { get; private set; }
@@ -354,12 +585,49 @@ public class AgentController : MonoBehaviour
     // Randomized per agent at spawn; influenced by hardinessTrait so specialists die younger.
     private float _maxLifespan;
 
+    /// Standard normal draw (mean 0, stdDev 1) via Box-Muller. Signed and symmetric about zero —
+    /// deliberately NOT wrapped in Abs, so callers get both positive and negative values.
+    private static float SampleStandardNormal()
+    {
+        float u1 = Mathf.Max(Random.value, 1e-6f);
+        float u2 = Random.value;
+        return Mathf.Sqrt(-2f * Mathf.Log(u1)) * Mathf.Cos(2f * Mathf.PI * u2);
+    }
+
+    /// One-time lifespan-jitter distribution self-test. If a build is actually running THIS code,
+    /// the log will show a ~50/50 positive/negative split with mean≈0. If this line is ABSENT from a
+    /// run's log, the binary is stale (predates this code) — which is the real explanation whenever
+    /// jitter appears one-sided despite the symmetric draw.
+    /// Called explicitly from GameLog.Init() (not [RuntimeInitializeOnLoadMethod]) — that attribute
+    /// fires before GameLog exists to capture Debug.Log output, so the line could never reach the
+    /// session's gamelog_*.txt file; calling it after GameLog.Init() guarantees it's captured.
+    public static void SelfTestLifespanJitter()
+    {
+        const int n = 1000;
+        int pos = 0, neg = 0;
+        float min = float.MaxValue, max = float.MinValue, sum = 0f;
+        for (int i = 0; i < n; i++)
+        {
+            float j = Mathf.Clamp(SampleStandardNormal() * 0.28f, -0.50f, 0.50f);
+            if (j > 0f) pos++; else if (j < 0f) neg++;
+            min = Mathf.Min(min, j); max = Mathf.Max(max, j); sum += j;
+        }
+        Debug.Log($"[EvoSim] JITTER_SELFTEST n={n} positive={pos} negative={neg} " +
+                  $"min={min:+0.000;-0.000} max={max:+0.000;-0.000} mean={sum / n:+0.000;-0.000} " +
+                  $"(expect ~50/50 split, mean≈0; if positive==0 the draw is genuinely broken)");
+    }
+    // Normal-distributed lifespan multiplier offset rolled once at spawn (see Init); logged in
+    // FIRST_UPDATE so the realized jitter distribution can be verified against the intended stdDev.
+    private float _lifespanJitter;
+
     // Locked survival needs — set once at Init from world state, inherited by offspring.
     private string _breathedGasName      = "";  // Name of the Breathed gas at genesis
+    private string _expelledGasName      = "";  // Name of the Expelled gas at genesis
     private float  _minBreathableFraction;       // fraction below which asphyxia begins
     private string _requiredLiquidKind   = "";  // liquid Name this lineage evolved in
 
     public string BreathedGasName    => _breathedGasName;
+    public string ExpelledGasName    => _expelledGasName;
     public string RequiredLiquidKind => _requiredLiquidKind;
 
     // Backbone element: set from AtmosphereManager.RolledBiochemistry at genesis,
@@ -376,6 +644,43 @@ public class AgentController : MonoBehaviour
     public bool HasGermLayers             { get; private set; } = false; // triploblastic development
     public bool IsAnoxicRefugeLineage     { get; private set; } = false; // retreated to anoxic refuges at GOE
 
+    // ── appearance-generation-spec §2.2 remaining morphological axes — set by gene events below,
+    // inherited by offspring like every other Era 1 evolved attribute. ──────────────────────────
+    public SegmentationType Segmentation  { get; private set; } = SegmentationType.Unsegmented; // M2
+    public SensoryModality PrimarySense   { get; private set; } = SensoryModality.Chemosensory;  // M6
+    private readonly HashSet<SensoryModality> _sensesAcquired = new HashSet<SensoryModality> { SensoryModality.Chemosensory };
+    public FeedingApparatus Feeding       { get; private set; } = FeedingApparatus.FilterPassive; // M9
+    public IntegumentType Integument      { get; private set; } = IntegumentType.BareMucous;       // M10
+    // M5 sub-variables (§2.4/§2.8): undifferentiated until e1_limb_differentiation fires — before
+    // that, any appendages present serve both roles at once, so neither pair count is meaningful yet.
+    public int LocomotorPairs             { get; private set; } = 0;
+    public int ManipulatorPairs           { get; private set; } = 0;
+    public bool VocalApparatus            { get; private set; } = false; // §2.8 e1_vocal_structure_emergence
+    // Non-bilaterian symmetry branches (M1) — mutually exclusive with each other and with the
+    // ordinary motile/sessile-derived Bilateral/Radial read in ApplyMorphology.
+    public bool IsColonialModular         { get; private set; } = false;
+    public bool IsBiradial                { get; private set; } = false;
+
+    /// Tiered read of physical size (M8) — derived from continuous scale, not separately tracked
+    /// state (appearance-generation-spec §1's "state is derived, not authored"). Breakpoints TUNABLE.
+    /// M3-driven ceiling: a body with no structural support (hydrostatic/soft) cannot sustain a Mega
+    /// frame — same size-vs-skeleton constraint already governing the EndoMineralized event above.
+    public SizeClass BodySizeClass
+    {
+        get
+        {
+            float scale = transform.localScale.x;
+            SizeClass tier = scale < 0.03f ? SizeClass.Micro
+                : scale < 0.08f ? SizeClass.Small
+                : scale < 0.18f ? SizeClass.Medium
+                : scale < 0.35f ? SizeClass.Large
+                : SizeClass.Mega;
+            if ((BodyPlan == BodyPlanType.None || BodyPlan == BodyPlanType.SoftBody) && tier > SizeClass.Large)
+                tier = SizeClass.Large;
+            return tier;
+        }
+    }
+
     public void Init(Vector3 center, float radius, CorpseSpawner corpseSpawner, AgentSpawner spawner,
         float visionTraitValue, float speedTraitValue, float strengthTraitValue, float hardinessTraitValue,
         float temperaturePreferenceValue, float moisturePreferenceValue, int community = 0, Color? color = null)
@@ -384,17 +689,25 @@ public class AgentController : MonoBehaviour
         planetRadius = radius;
         _corpseSpawner = corpseSpawner;
         _spawner = spawner;
+        Debug.Log($"[EvoSim] INIT agentId={AgentId} community={community} enabled={enabled} name={name}");
+        if (!enabled) { Debug.LogWarning("[EvoSim] AgentController was DISABLED — forcing enabled=true. Check prefab!"); enabled = true; }
         // Grace period: start starve-clock negative so new agents (especially the very
         // first organism, which has no food yet) have time for KingdomFork to fire.
         _timeSinceLastMeal = -starvationTime;
+        maxSolarEnergy = 3f; // bypass any stale prefab-serialized value
         _solarEnergy = maxSolarEnergy * 0.5f;
         _chemEnergy  = maxSolarEnergy * 0.5f; // all organisms start with half chemical reserve
         _pressureRefreshTimer = Random.Range(0f, PressureRefreshInterval); // stagger refreshes
+        _senseTimer = Random.Range(0f, SenseInterval); // stagger prey/mate/threat scans across frames
         AgeSeconds = 0f;
         communityId = community;
 
         lineageColor = color ?? Color.white;
         ApplyLineageColor();
+        // Default morph seed from the founding community; offspring overwrite this with the parent's
+        // seed in InheritGenesFrom, and speciation drifts it — so shape tracks lineage, not raw id.
+        _morphSeed = communityId + 1;
+        ApplyMorphology();
 
         // Lock in the current atmosphere as this lineage's "ideal mix" (genesis adaptation).
         // Offspring overwrite this via InheritGenesFrom rather than resampling at birth.
@@ -419,11 +732,6 @@ public class AgentController : MonoBehaviour
         thermalCycleTolerance = Random.Range(thermalCycleToleranceSpawnRange.x, thermalCycleToleranceSpawnRange.y);
         pressurePreference    = AtmosphereManager.Instance != null ? AtmosphereManager.Instance.PressureBar : 1f;
 
-        // Baseline genes assumed already acquired before this sim begins (Section 14a -
-        // the sim starts post-eukaryotic-transition, not at the literal origin of life).
-        AcquiredGenes.Add("Nucleus");
-        AcquiredGenes.Add("Multicellularity");
-
         // Randomized per-agent thresholds so genes don't all fire in the same order or
         // at the same time across the population (Section 14e).
         sensoryGeneEatThreshold = Random.Range(sensoryGeneEatThresholdRange.x, sensoryGeneEatThresholdRange.y + 1);
@@ -437,14 +745,29 @@ public class AgentController : MonoBehaviour
         // Lifespan: randomized ±40% around the mean, then scaled by hardiness so generalists
         // (high hardiness) live longer and specialists (low hardiness) burn bright but brief.
         float hardinessLifeBonus = Mathf.Lerp(-lifespanHardinessInfluence, lifespanHardinessInfluence, hardinessTrait / 100f);
-        _maxLifespan = meanLifespan * (1f + hardinessLifeBonus) * Random.Range(0.6f, 1.4f);
+        // Quarter-power lifespan scaling (West, Brown & Enquist metabolic theory): larger organisms
+        // live proportionally longer, anchored to spawn scale so Era 0 lifespan = meanLifespan.
+        float lifespanSizeScale = Mathf.Pow(Mathf.Max(transform.localScale.x, 0.001f) / 0.05f, 0.25f);
+        // Symmetric normal-distribution jitter (stdDev=0.28, clamp ±0.50) breaks cohort
+        // synchronization: agents born in the same burst die across a wide, non-uniform spread
+        // rather than a tight wave. SampleStandardNormal() is a plain signed Gaussian (no Abs
+        // wrapper) and the clamp is symmetric, so the distribution is centred on zero — roughly
+        // half the population is longer-lived, half shorter-lived, not a one-sided shortening.
+        float jitter = Mathf.Clamp(SampleStandardNormal() * 0.28f, -0.50f, 0.50f);
+        _lifespanJitter = jitter; // stored for FIRST_UPDATE diagnostic so the rolled distribution is verifiable
+        GameLog.RecordLifespanJitter(jitter); // Priority 6: running distribution summary
+        _maxLifespan = meanLifespan * lifespanSizeScale * (1f + hardinessLifeBonus) * (1f + jitter);
 
         // Lock survival needs from current world state so offspring inherit them and can
         // accumulate asphyxiation pressure if the atmosphere drifts away from the genesis mix.
         _breathedGasName = "";
+        _expelledGasName = "";
         if (AtmosphereManager.Instance != null)
             foreach (var g in AtmosphereManager.Instance.Gases)
-                if (g.Role == GasRole.Breathed) { _breathedGasName = g.Name; break; }
+            {
+                if (g.Role == GasRole.Breathed && string.IsNullOrEmpty(_breathedGasName)) _breathedGasName = g.Name;
+                if (g.Role == GasRole.Expelled && string.IsNullOrEmpty(_expelledGasName)) _expelledGasName = g.Name;
+            }
         _minBreathableFraction = Mathf.Lerp(0.12f, 0.03f, hardinessTrait / 100f);
         _requiredLiquidKind = FluidDynamicsManager.Instance?.CurrentLiquid?.Name ?? "";
 
@@ -479,6 +802,26 @@ public class AgentController : MonoBehaviour
         PhotoEfficiency        = photoEfficiencySpawn;
         ChemoEfficiency        = chemoEfficiencySpawn;
         AssimilationEfficiency = assimilationEfficiencySpawn;
+        // Force tuned gameplay values regardless of any prefab-serialized overrides.
+        ChemoEfficiency = 0.50f;
+        // Reproduce after ONE successful energy-fill cycle, not three. Requiring three fills before
+        // the first offspring meant an organism spent ~36s of its ~46s life just to reproduce once —
+        // expected-offspring-per-lifetime fell below replacement, so every population declined to
+        // extinction regardless of world. The density-dependent reproduction COOLDOWN (5s at low
+        // population up to 30s at high) is what actually rate-limits breeding; this was double-gating
+        // it into non-viability. TUNABLE.
+        eatsToReproduce = 1;
+    }
+
+    /// Founder-only: seed this organism at a random point in its lifespan instead of age 0, so a
+    /// founding population is age-MIXED (like any real population) rather than a cohort of newborns
+    /// that all reach old age in the same ~30-second window and die in one synchronized wave — the
+    /// structural cause of the founder boom-then-crash that killed the population every run. Spreads
+    /// founder deaths into a smooth background rate that offspring can replace. Offspring (born via
+    /// Reproduce) correctly start at age 0; only the initial founders call this.
+    public void StaggerFounderAge()
+    {
+        AgeSeconds = Random.Range(0f, _maxLifespan * 0.7f);
     }
 
     /// Sets this agent's trait dimensions and registers them with the live population stats.
@@ -523,11 +866,116 @@ public class AgentController : MonoBehaviour
         r.SetPropertyBlock(block);
     }
 
+    private MeshFilter _meshFilter;
+    // Per-lineage morphology seed: initialized from the founding community, inherited unchanged by
+    // offspring (so descendants resemble their parents), and drifted on speciation (so a branch
+    // event produces a visibly divergent body). This is the spec's "seed evolves over generations."
+    private int _morphSeed;
+
+    /// Replaces the static capsule mesh with a procedurally-generated body shaped by this organism's
+    /// state (symmetry, motility, appendages, structural body plan) and its lineage identity, so
+    /// species look distinct and evolve their silhouette as they gain motility/appendages/structure.
+    /// (appearance-generation-spec §3.) Called at spawn and after each major morphological transition.
+    /// Cheap: the generator caches one mesh per (lineage × morphology) signature and shares it.
+    public void ApplyMorphology()
+    {
+        if (_meshFilter == null) _meshFilter = GetComponentInChildren<MeshFilter>();
+        if (_meshFilter == null) return;
+
+        // Defensive: a fault in procedural mesh generation must NEVER prevent an organism from
+        // spawning/living — it is a purely cosmetic layer. On error, keep the existing (capsule)
+        // mesh and log once, rather than letting the exception propagate up through Init/SpawnAgent
+        // and abort the whole spawn loop (which would empty the world).
+        try
+        {
+            _meshFilter.sharedMesh = MorphologyGenerator.GetMesh(
+                lineageSeed: _morphSeed,
+                symmetry: GetEffectiveSymmetry(),
+                motile: HasMotility,
+                appendageLevel: (int)Manipulation,
+                structureType: (int)BodyPlan,
+                segmentation: (int)Segmentation,
+                integument: (int)Integument,
+                pairCount: LocomotorPairs + ManipulatorPairs,
+                networkForeshadowBucket: ComputeNetworkForeshadowBucket());
+
+            // appearance-generation-spec §2.4/§3.4: build (and, for the player's own lineage, log)
+            // the appearance descriptor every time the underlying state actually changes — the
+            // Historical Record UI (§3.4, Era 2 scope, not yet built) will read this same Build()
+            // call once it exists. Player-only to avoid a per-NPC descriptor build on every
+            // population-wide morphological tick.
+            if (communityId == 0)
+                Debug.Log($"[Appearance] {name} descriptor updated:\n{AppearanceDescriptor.Build(this).ToYamlString()}");
+        }
+        catch (System.Exception e)
+        {
+            if (!_morphErrorLogged) { _morphErrorLogged = true; Debug.LogWarning($"[Morphology] generation failed for {name}, keeping default mesh: {e.Message}"); }
+        }
+    }
+    private static bool _morphErrorLogged;
+
+    /// Resolves this organism's current M1 symmetry — shared by ApplyMorphology (feeds the mesh
+    /// generator) and AppearanceDescriptor.Build (feeds the descriptor), so the two can never drift
+    /// apart. ColonialModular/Biradial are rare OR-gate sibling branches (§2.2); otherwise symmetry
+    /// derives from motility plus a seeded low-probability Asymmetric roll.
+    public MorphologyGenerator.Symmetry GetEffectiveSymmetry()
+    {
+        if (IsColonialModular) return MorphologyGenerator.Symmetry.ColonialModular;
+        if (IsBiradial) return MorphologyGenerator.Symmetry.Biradial;
+        MorphologyGenerator.Symmetry sym = HasMotility ? MorphologyGenerator.Symmetry.Bilateral : MorphologyGenerator.Symmetry.Radial;
+        if (((((uint)_morphSeed * 2654435761u) >> 3) & 7u) == 0u)
+            sym = MorphologyGenerator.Symmetry.Asymmetric;
+        return sym;
+    }
+
+    /// appearance-generation-spec §3.3: "legible foreshadowing" — how far a Distributed-architecture
+    /// lineage has progressed toward its eventual network/colonial visual language, bucketed 0-10 for
+    /// the mesh cache. Era2Manager.AssignFork1 resolves a provisional Architecture at Era 2's very
+    /// start (sessile → Distributed immediately; motile lineages may still be reassigned by Fork 2),
+    /// so this reads real, already-available Era 2 state rather than guessing ahead of it. Zero for
+    /// every other architecture, before Era 2 begins, or once the lineage already has the hard
+    /// ColonialModular symmetry (§2.2 M1) — this is deliberately a separate, gradual signal from that
+    /// rare Era 1 event, not a replacement for it.
+    private int ComputeNetworkForeshadowBucket()
+    {
+        if (IsColonialModular) return 0;
+        if (Era2Manager.Instance == null || !Era2Manager.Instance.IsActive) return 0;
+        var rec = Era2Manager.Instance.GetRecord(communityId);
+        if (rec == null || rec.Architecture != CognitiveArchitecture.Distributed) return 0;
+        return Mathf.RoundToInt(Mathf.Clamp01(rec.II / 15f) * 10f);
+    }
+
     /// Natural death (starvation, energy depletion, atmosphere crisis): leaves a
     /// decaying corpse for scavengers before removing this agent. Direct predation
     /// kills (see UpdateConsumer) skip this - the prey is eaten immediately instead.
-    public void Die()
+    /// Founder survival rescue: instead of dying, a last-ditch member of a founding lineage clings
+    /// on — reset to a younger age and its energy reserve topped up to a viable level. "Not at full
+    /// strength, but alive." Called by FounderSurvivalManager when this death would drop one of the 8
+    /// founding communities below its survival floor before Era 3.
+    public void RejuvenateForFounderRescue()
     {
+        AgeSeconds             = Random.Range(0.05f, 0.35f) * _maxLifespan;
+        float refill           = maxSolarEnergy * 0.5f;
+        _chemEnergy            = Mathf.Max(_chemEnergy, refill);
+        _solarEnergy           = Mathf.Max(_solarEnergy, refill);
+        _timeSinceLastMeal     = 0f;
+        _dormancyTimer         = 0f;
+        _mediumMismatchExposure = 0f;
+    }
+
+    public void Die(DeathCause cause = DeathCause.Unknown)
+    {
+        // Founder survival guarantee: the 8 founding lineages (community 0–7) are protected from
+        // EXTINCTION before Era 3 regardless of cause (OldAge waves, starvation, an acute swing). If
+        // this death would push the lineage below its survival floor, the organism clings on instead
+        // of dying. This is the hard backstop behind "founders must survive to Era 3."
+        if (FounderSurvivalManager.TryRescueFounderFromDeath(this))
+            return;
+
+        int popGlobalBefore = _spawner?.ActiveAgents.Count ?? 0;
+        int popGlobalAfter  = popGlobalBefore - 1; // this agent is still in ActiveAgents until OnDestroy
+        GameLog.LogDeath(communityId, cause, popGlobalAfter);
+        Debug.Log($"[EvoSim] DEATH agentId={AgentId} community={communityId} cause={cause} pop_global_before={popGlobalBefore} pop_global_after={popGlobalAfter}");
         if (_corpseSpawner != null) _corpseSpawner.SpawnCorpseAt(transform.position, _currentMass);
         Destroy(gameObject);
     }
@@ -549,20 +997,35 @@ public class AgentController : MonoBehaviour
     void Update()
     {
         AgeSeconds += Time.deltaTime;
-        if (AgeSeconds >= _maxLifespan) { Die(); return; }
+        if (!_updateLogged) { _updateLogged = true; Debug.Log($"[EvoSim] FIRST_UPDATE agent={name} motility={HasMotility} metabolism={Metabolism} maxSolar={maxSolarEnergy} chemoEff={ChemoEfficiency} lifespanJitter={_lifespanJitter:+0.000;-0.000} maxLifespan={_maxLifespan:F1}s"); }
+        if (AgeSeconds >= _maxLifespan) { Die(DeathCause.OldAge); return; }
 
         // Update habitat medium before movement so drift source and fitness multipliers
-        // are based on where the organism actually is this frame.
-        CurrentMedium = FluidDynamicsManager.Instance != null && FluidDynamicsManager.Instance.IsSubmerged(transform.position)
+        // are based on where the organism actually is this frame. Cache the liquid depth
+        // from the single lookup so metabolism/drift don't each re-scan the vertex grid.
+        var fluid = FluidDynamicsManager.Instance;
+        _currentLiquidDepth = fluid != null ? fluid.GetLiquidDepthNearPosition(transform.position) : 0f;
+        CurrentMedium = fluid != null && _currentLiquidDepth >= fluid.minVolumeToRender
             ? HabitatMedium.Sea
             : HabitatMedium.Land;
 
+        // Advance the throttled sense cycle. When it ticks, the prey/mate/threat scans are allowed to
+        // recompute once; between ticks they return cached targets. Phased by _senseTimer's Init offset
+        // so the population's scans spread across frames instead of spiking on one. (Perf: option #3.)
+        _senseTimer -= Time.deltaTime;
+        bool senseTick = _senseTimer <= 0f;
+        if (senseTick) { _senseTimer += SenseInterval; _senseCycle++; }
+        _geneCheckElapsed += Time.deltaTime;
+
         UpdateStressLevel();
         UpdatePressureVariables();
+        UpdateDispersalState();
         ApplyMediumMismatchDrain();
         CheckSexualIsolation();
         CheckGasSurvival();
         CheckBackboneGasTolerance();
+
+        if (_dormancyTimer > 0f) _dormancyTimer -= Time.deltaTime;
 
         if (!HasMotility)
             UpdatePassiveDrift();
@@ -571,12 +1034,74 @@ public class AgentController : MonoBehaviour
         else
             UpdateConsumer();
 
+        // Keep visual size synced to era × species-size-class × growth every frame (covers era
+        // transitions and zero-net ticks that skip ApplyGrowthShrinkage's scale update).
+        RefreshVisualScale();
+
+        // Fallback reproduction cadence (see field docs): guarantees a mature, well-fed PRODUCER
+        // reproduces even when the primary three-fill energy-threshold path never triggers within
+        // its lifespan on slow-metabolism worlds. TryReproduce() still enforces cooldown/pop-cap
+        // /mate gates, so this cannot over-breed a saturated or mate-starved population.
+        //
+        // CONSUMERS (heterotrophs) are deliberately EXCLUDED: their reproduction must be earned by
+        // actual consumption (OnEat from predation/scavenging), never by a flat timer. Heterotrophs
+        // passively top up _chemEnergy via osmotrophy (UpdateConsumer Layer 1) with no eat-count, so
+        // an unconditional fallback let them reproduce free at reserveFrac=1.00 regardless of prey
+        // availability — the monoculture exploit where a "predator" out-breeds everyone without ever
+        // hunting. Gating the fallback to producers ties heterotroph population to real food supply.
+        _reproTimer += Time.deltaTime;
+        if (IsProducer && _reproTimer >= ReproFallbackInterval)
+        {
+            _reproTimer = 0f;
+            float reserveFrac = Mathf.Max(_chemEnergy, _solarEnergy) / Mathf.Max(maxSolarEnergy, 0.001f);
+            if (AgeSeconds >= _maxLifespan * ReproFallbackMinAgeFrac && reserveFrac >= ReproFallbackEnergyFrac)
+            {
+                // Only log the pathological case: an agent that has never completed a single
+                // energy-fill cycle (_lifetimeEats == 0) yet is well-fed — i.e. the primary path is
+                // genuinely stuck, not merely supplemented. Avoids one-line-per-agent spam on
+                // healthy worlds where the fallback just runs alongside a working fill-cycle.
+                if (!_reproFallbackLogged && _lifetimeEats == 0)
+                {
+                    _reproFallbackLogged = true;
+                    Debug.Log($"[EvoSim] REPRO_FALLBACK agent={name} community={communityId} age={AgeSeconds:F0}s " +
+                              $"reserveFrac={reserveFrac:F2} maxSolar={maxSolarEnergy:F2} metabolism={Metabolism} " +
+                              $"— primary fill-cycle path never triggered (0 fills); time-based fallback reproducing.");
+                }
+                TryReproduce();
+            }
+        }
+
+        // Force-grant Nucleus and Multicellularity on schedule — required prerequisites
+        // before any gene event can fire; this path is separate from GeneEvolutionManager, so it
+        // bypasses the normal "GENE QUEUED" log line. Log explicitly here instead so eukaryogenesis
+        // (Nucleus) and the multicellularity transition are still visible in diagnostics — these
+        // are foundational milestones, not less real just because they're not player-facing choices.
+        float _se = GeneEvolutionManager.SessionElapsed;
+        if (_se >= 3f && !AcquiredGenes.Contains("Nucleus"))
+        {
+            AcquiredGenes.Add("Nucleus");
+            Debug.Log($"[EvoSim] GENE FORCE-GRANTED: Nucleus community={communityId} elapsed={_se:F0}s");
+        }
+        if (_se >= 8f && !AcquiredGenes.Contains("Multicellularity"))
+        {
+            AcquiredGenes.Add("Multicellularity");
+            Debug.Log($"[EvoSim] GENE FORCE-GRANTED: Multicellularity community={communityId} elapsed={_se:F0}s");
+        }
+
         // Separation only matters for motile organisms; drifters are carried by the same
         // currents so packing them is fine and the O(N²) check is wasted on sessile life.
         if (HasMotility) ApplySeparation();
         AttemptAtmosphericSpeciation();
         MaybeChangeSex();
-        GeneEvolutionManager.CheckEligibleGenes(this);
+
+        // Gene eligibility is a 49-gene scan per agent — a top CPU cost that gains nothing from 60 Hz.
+        // Run it on the sense cadence, passing the REAL elapsed time since the last scan so the
+        // probabilistic auto-gene origination rate (chance/sec) is exactly preserved. (Perf: option #1.)
+        if (senseTick)
+        {
+            GeneEvolutionManager.CheckEligibleGenes(this, _geneCheckElapsed);
+            _geneCheckElapsed = 0f;
+        }
     }
 
     /// Passive dispersal: no directed locomotion. Medium determines the carrying agent:
@@ -632,12 +1157,38 @@ public class AgentController : MonoBehaviour
         if (fleeWeight > 0.3f)
             _heading = Vector3.Slerp(_heading, fleeDir, fleeWeight * 0.5f * Time.deltaTime).normalized;
 
+        // Passive dispersal (Issue 1b): a weak prevailing "current" biases non-motile drift in one
+        // consistent global direction, so simple pre-motility life slowly colonizes new regions over
+        // geological time instead of oscillating in place forever waiting for motility to evolve.
+        Vector3 pdNormal = (transform.position - planetCenter).normalized;
+        Vector3 prevailing = Vector3.Cross(pdNormal, Vector3.up);
+        if (prevailing.sqrMagnitude < 0.0001f) prevailing = Vector3.Cross(pdNormal, Vector3.forward);
+        _heading = Vector3.Slerp(_heading, prevailing.normalized, PassiveDispersalBias).normalized;
+
         float eraMult = EraManager.Instance != null ? EraManager.Instance.MoveSpeedMultiplier : 1f;
         // Sessile organisms can drift slightly faster when threatened (turbulence response).
         float fleeBoost = 1f + fleeWeight * 0.3f;
         Vector3 newPos = SphereSurface.MoveAlongSurface(
             transform.position, _heading, moveSpeed * eraMult * 0.12f * liquidDrag * fleeBoost * Time.deltaTime,
             planetCenter, planetRadius);
+
+        // Habitat boundary: a non-motile organism has no directed locomotion to escape a fatal
+        // medium, so it should not drift across the sea/land boundary like a free particle.
+        // If the proposed step would exit viable medium, damp it to a near-zero anchor jitter and
+        // steer the heading back toward viable habitat — modeling a tethered sessile organism
+        // rather than one that random-walks onto land and dies of MediumMismatch.
+        if (!HasMotility && FluidDynamicsManager.Instance != null)
+        {
+            bool proposedSubmerged = FluidDynamicsManager.Instance.IsSubmerged(newPos);
+            bool proposedViable = _isAquatic ? proposedSubmerged : !proposedSubmerged;
+            if (!proposedViable)
+            {
+                // Reverse heading (bias back toward the viable side) and keep position nearly put.
+                _heading = Vector3.Reflect(_heading, (transform.position - planetCenter).normalized).normalized;
+                newPos = Vector3.Lerp(transform.position, newPos, HabitatReturnBias);
+            }
+        }
+
         transform.position = newPos;
         AlignToSurface();
 
@@ -663,7 +1214,10 @@ public class AgentController : MonoBehaviour
         Vector3 myPos = transform.position;
         Vector3 myNormal = (myPos - planetCenter).normalized;
 
-        foreach (var other in _spawner.ActiveAgents)
+        // Bound the grid query to a generous max agent size rather than the true requiredSep (which
+        // varies per-pair) — the inner distance check below still applies the exact per-pair radius.
+        _spawner.QueryNearby(myPos, 2f, _queryBuffer);
+        foreach (var other in _queryBuffer)
         {
             if (other == null || other == this) continue;
             float otherRadius = other.transform.localScale.x * 0.5f;
@@ -705,6 +1259,21 @@ public class AgentController : MonoBehaviour
 
     /// Same hardiness-style scaling as climate fitness: a generalist (high gasTolerance)
     /// takes a shallow penalty for a given mismatch, a specialist (low gasTolerance) a steep one.
+    /// Chooses between EnergyDepletion and ClimateStress when an agent's energy reserve hits
+    /// zero. If climate or atmospheric discomfort is severe at the moment of death, the deficit
+    /// was climate-driven (the Q10 demand inflation / atmospheric penalty outran income) rather
+    /// than ordinary foraging bad luck — attribute it distinctly so climate mortality is visible
+    /// in death-cause breakdowns. Threshold is TUNABLE.
+    private DeathCause EnergyDeathCause()
+    {
+        const float SevereDiscomfort = 0.6f;
+        float climate = GetDiscomfort(transform.position);
+        float atmo    = GetAtmosphericDiscomfort();
+        return (climate >= SevereDiscomfort || atmo >= SevereDiscomfort)
+            ? DeathCause.ClimateStress
+            : DeathCause.EnergyDepletion;
+    }
+
     private float GetAtmosphericFitnessMultiplier()
     {
         float discomfort = GetAtmosphericDiscomfort();
@@ -764,10 +1333,10 @@ public class AgentController : MonoBehaviour
         if (_spawner == null) return;
         const float ScanRadius = 8f;
         int total = 0, consumers = 0, sameCommunity = 0;
-        foreach (var a in _spawner.ActiveAgents)
+        _spawner.QueryNearby(transform.position, ScanRadius, _queryBuffer);
+        foreach (var a in _queryBuffer)
         {
             if (a == null || a == this) continue;
-            if (Vector3.Distance(transform.position, a.transform.position) > ScanRadius) continue;
             total++;
             if (!a.IsProducer && a.HasMotility) consumers++;
             if (a.communityId == communityId) sameCommunity++;
@@ -777,7 +1346,19 @@ public class AgentController : MonoBehaviour
         // MateScarcity: high when same-community density is low (mate-search difficulty).
         // Cap at 6 same-community neighbors = no scarcity; 0 neighbors = maximum scarcity.
         MateScarcity = 1f - Mathf.Clamp01(sameCommunity / 6f);
+        _localSameCommunity = sameCommunity; // local crowding signal for density-dependent dispersal
+
+        // appearance-generation-spec §3.3: re-checked on this same staggered cadence because it
+        // drifts continuously as Era 2's Intelligence Index rises, unlike every other
+        // ApplyMorphology trigger (which fires from discrete gene-choice events instead).
+        int networkBucket = ComputeNetworkForeshadowBucket();
+        if (networkBucket != _lastNetworkForeshadowBucket)
+        {
+            _lastNetworkForeshadowBucket = networkBucket;
+            ApplyMorphology();
+        }
     }
+    private int _lastNetworkForeshadowBucket;
 
     /// Same hardiness/gasTolerance-style scaling: a resilient individual (high
     /// stressTolerance) takes a shallow extra penalty for a given accumulated StressLevel,
@@ -815,6 +1396,8 @@ public class AgentController : MonoBehaviour
 
             lineageColor = Color.HSVToRGB(Random.value, Random.Range(0.65f, 0.95f), Random.Range(0.85f, 1f));
             ApplyLineageColor();
+            _morphSeed = _morphSeed * 31 + Random.Range(1, 100000); // branch → divergent body
+            ApplyMorphology();
 
             Debug.Log($"[Speciation] {name} adapted to the shifted atmosphere -> new lineage '{AtmoLineage}'");
         }
@@ -832,6 +1415,8 @@ public class AgentController : MonoBehaviour
         AtmoLineage = lineageName;
         lineageColor = color;
         ApplyLineageColor();
+        _morphSeed = _morphSeed * 31 + Random.Range(1, 100000); // branch → divergent body
+        ApplyMorphology();
 
         // Drift 1 or 2 randomly chosen traits to represent ecological niche divergence.
         int driftCount = Random.Range(1, 3);
@@ -856,7 +1441,12 @@ public class AgentController : MonoBehaviour
         float nutrients = ChemicalNutrientPool.Sample(transform.position);
         float osmotrophySlowdown = Mathf.Clamp01(nutrients * 0.45f); // up to 45% starvation reduction
         if (nutrients > 0.01f)
+        {
             ChemicalNutrientPool.Deplete(transform.position, 0.00008f * Time.deltaTime);
+            // Passive absorption trickle-charges the energy reserve even without active predation.
+            float passiveGain = nutrients * ChemoEfficiency * 0.3f * Time.deltaTime;
+            _chemEnergy = Mathf.Clamp(_chemEnergy + passiveGain, 0f, maxSolarEnergy);
+        }
 
         // Layer 2 — active foraging: predation hard-requires motility per spec
         // (e1_heterotrophic_predation_emergence needs e1_motility_emergence).
@@ -873,21 +1463,52 @@ public class AgentController : MonoBehaviour
             {
                 desiredTangent = fleeDir;
             }
+            else if (IsDispersing)
+            {
+                // Committed dispersal journey away from the saturated home cluster (well-fed
+                // dispersers forgo local hunting/mating for the duration; yields only to flee).
+                desiredTangent = fleeWeight > 0f
+                    ? (ComputeDispersalTangent() * (1f - fleeWeight) + fleeDir * fleeWeight).normalized
+                    : ComputeDispersalTangent();
+            }
             else
             {
                 Vector3 huntTangent = preyTarget != null
                     ? ComputeMovementTangentToPrey(preyTarget)
                     : ComputeMovementTangentToCorpse(corpseTarget);
+
+                // Mate-seeking: when sexual and energetically ready, redirect toward nearest
+                // mate if none is already in sense range. Prey-hunting takes priority when
+                // starving (< half the starvation window elapsed); mating wins otherwise.
+                if (IsSexual && _eatsSinceReproduction >= eatsToReproduce
+                    && _timeSinceLastMeal < starvationTime * 0.5f
+                    && FindMateInRange() == null)
+                {
+                    AgentController target = FindNearestMate();
+                    if (target != null)
+                    {
+                        Vector3 norm = (transform.position - planetCenter).normalized;
+                        Vector3 toMate = (target.transform.position - transform.position);
+                        Vector3 mateTangent = (toMate - Vector3.Dot(toMate, norm) * norm).normalized;
+                        if (mateTangent.sqrMagnitude > 0.01f)
+                            huntTangent = Vector3.Slerp(huntTangent, mateTangent, 0.6f).normalized;
+                    }
+                }
+
                 desiredTangent = fleeWeight > 0f
                     ? (huntTangent * (1f - fleeWeight) + fleeDir * fleeWeight).normalized
                     : huntTangent;
+                // Territorial tether — see UpdateProducer for the full rationale. Applied after flee
+                // blending so predator escape always still takes priority over heading home.
+                desiredTangent = ApplyTerritorialBias(desiredTangent);
             }
 
             _heading = Vector3.Slerp(_heading, desiredTangent, turnSpeed * Time.deltaTime).normalized;
             float eraMult = EraManager.Instance != null ? EraManager.Instance.MoveSpeedMultiplier : 1f;
             float fleeBoost = 1f + fleeWeight * 0.5f;
             Vector3 newPos = SphereSurface.MoveAlongSurface(transform.position, _heading,
-                moveSpeed * eraMult * fleeBoost * Time.deltaTime, planetCenter, planetRadius);
+                moveSpeed * eraMult * fleeBoost * globalMoveSpeedScale * Time.deltaTime, planetCenter, planetRadius);
+            newPos = ApplyMediumBoundary(newPos);
             transform.position = newPos;
             AlignToSurface();
         }
@@ -929,19 +1550,26 @@ public class AgentController : MonoBehaviour
                 float corpseMass = corpseTarget.Consume();
                 float energyGained = corpseMass * 0.8f * AssimilationEfficiency; // corpse = lower caloric density
                 _chemEnergy = Mathf.Clamp(_chemEnergy + energyGained, 0f, maxSolarEnergy);
+                // Priority 2: distinct consumption log every time a corpse is actually eaten, so
+                // "is anything eating corpses / is heterotroph reproduction tied to real scavenging"
+                // is directly answerable instead of inferred.
+                Debug.Log($"[Corpse] CONSUMED agent={name} community={communityId} nutrientGained={energyGained:F4} corpseMass={corpseMass:F4}");
                 OnEat(energyGained);
             }
         }
+
+        if (_reproCooldownTimer > 0f) _reproCooldownTimer -= Time.deltaTime;
 
         // Starvation tick: non-climate pressures combined (Q10 handles temperature via ComputeDemand).
         float drain = GetNonClimateFitnessMultipliers() * (1f - osmotrophySlowdown);
         _timeSinceLastMeal += Time.deltaTime * drain;
         if (_timeSinceLastMeal >= starvationTime)
-            Die();
+            Die(DeathCause.Starvation);
 
         // Grow/shrink from net energy: consumers lose mass when starving, gain when fed.
         // Net is negative here (no continuous acquisition — onEat pulses _chemEnergy instead).
         float consumerNet = (_chemEnergy > maxSolarEnergy * 0.5f) ? ComputeDemand() * 0.1f : -ComputeDemand();
+        NetEnergy = consumerNet; // previously never set for consumers — avgNet read a permanent 0.0 for any all-heterotroph community
         ApplyGrowthShrinkage(consumerNet);
     }
 
@@ -949,6 +1577,17 @@ public class AgentController : MonoBehaviour
     /// Models grazing — the producer is weakened but survives.
     private void GrazeOn(AgentController producer)
     {
+        // Refuge effect: if the prey community is down to ≤4 agents they're effectively
+        // unfindable (sparse + evasive). This prevents consumers from eating a species
+        // to absolute zero, preserving producer diversity.
+        if (_spawner != null && producer.communityId >= 0)
+        {
+            int preyPop = 0;
+            foreach (var a in _spawner.ActiveAgents)
+                if (a != null && a.communityId == producer.communityId) preyPop++;
+            if (preyPop <= 4) return;
+        }
+
         float drained = producer.DrainEnergy(maxSolarEnergy * 0.25f);
         if (drained > 0f)
         {
@@ -965,7 +1604,17 @@ public class AgentController : MonoBehaviour
         // Caloric density: producers are energy-rich (full reserve); consumers vary by reserve.
         float preyBiomass = prey._currentMass;
         float caloricDensity = prey.IsProducer ? 1.2f : 1.0f;
-        float energyGained = preyBiomass * caloricDensity * AssimilationEfficiency;
+        float grossEnergy = preyBiomass * caloricDensity * AssimilationEfficiency;
+
+        // Predation cost: subduing larger/tougher prey (relative to this predator's mass/strength)
+        // consumes a bigger share of the yield. costFraction rises with the prey/predator mass ratio
+        // and with prey hardiness vs. predator strength, clamped so net stays non-negative.
+        float predatorMass = Mathf.Max(_currentMass, 1e-4f);
+        float massRatio    = Mathf.Pow(Mathf.Max(preyBiomass, 1e-4f) / predatorMass, PredationCostExponent);
+        float toughness    = (prey.hardinessTrait + 1f) / (strengthTrait + 1f);
+        float costFraction = Mathf.Clamp01(PredationCostFraction * massRatio * toughness);
+
+        float energyGained = grossEnergy * (1f - costFraction);
         _chemEnergy = Mathf.Clamp(_chemEnergy + energyGained, 0f, maxSolarEnergy);
         return energyGained;
     }
@@ -997,12 +1646,16 @@ public class AgentController : MonoBehaviour
     private void OnEat(float energyGained = 0f)
     {
         _timeSinceLastMeal = 0f;
-        _eatsSinceReproduction++;
         _lifetimeEats++;
 
-        if (_eatsSinceReproduction >= eatsToReproduce)
+        // Energy-threshold reproduction: active eating (predation, scavenging, grazing) fills
+        // the reserve; reproduce when it's full, same model as chemosynthetics and osmotrophy.
+        if (_chemEnergy >= maxSolarEnergy * 0.90f)
         {
-            TryReproduce();
+            _chemEnergy = maxSolarEnergy * 0.5f;
+            _eatsSinceReproduction++;
+            if (_eatsSinceReproduction >= eatsToReproduce)
+                TryReproduce();
         }
     }
 
@@ -1012,23 +1665,148 @@ public class AgentController : MonoBehaviour
     /// on every subsequent qualifying tick/meal until a mate turns up.
     private void TryReproduce()
     {
-        // Era-based population cap: don't reproduce if we're at or above the limit.
-        if (EraManager.Instance != null && _spawner != null &&
-            _spawner.ActiveAgents.Count >= EraManager.Instance.MaxPopulation)
+        // Emergency dormancy trades reproduction for survival — see EnterDormancy.
+        if (_dormancyTimer > 0f) return;
+
+        // Minimum time between successive reproductions — prevents heterotrophs that graze
+        // rapidly from out-breeding chemosynthetics by orders of magnitude.
+        if (_reproCooldownTimer > 0f) return;
+
+        // Technical safety valve only (NOT an ecological carrying-capacity cap — that's now purely
+        // emergent from energy math). This is a pure frame-rate protection ceiling and should rarely
+        // if ever actually trigger in normal play.
+        if (_spawner != null && _spawner.ActiveAgents.Count >= AgentSpawner.MaxIndividualAgents)
+        {
+            GameLog.LogReproFail(communityId, "IndividualCountSafetyValve");
             return;
+        }
+
+        // Small communities recover faster after mass-die events: at ≤5 survivors
+        // the cooldown drops to 5s, scaling linearly back to 30s at 50+ agents.
+        int commPop = 0;
+        if (_spawner != null)
+            foreach (var a in _spawner.ActiveAgents)
+                if (a != null && a.communityId == communityId) commPop++;
+        float cooldown = Mathf.Lerp(5f, 30f, Mathf.InverseLerp(5, 50, commPop));
 
         if (!IsSexual)
         {
             _eatsSinceReproduction = 0;
+            _reproCooldownTimer = cooldown;
+            GameLog.LogBirth(communityId);
+            Debug.Log($"[EvoSim] BIRTH asexual community={communityId} pop_global={_spawner?.ActiveAgents.Count}");
             Reproduce(null);
             return;
         }
 
         AgentController mate = FindMateInRange();
-        if (mate == null) return; // blocked - try again next time the condition re-checks
+        if (mate == null)
+        {
+            GameLog.LogReproFail(communityId, "NoMate");
+            _noMateStreak++;
+            // Facultative parthenogenesis: a sexual lineage that repeatedly can't find a mate falls
+            // back to asexual cloning rather than being reproductively locked out (real-world: aphids,
+            // Komodo dragons, some sharks/snakes under mate scarcity). This is the fix for the Allee
+            // dead-end where a small sexual population froze — reproduction stalled to zero while
+            // energy stayed healthy and the founder floor blocked extinction, pinning it at ~2-4
+            // members indefinitely. Cloning restores growth, which restores mate availability, at which
+            // point sexual reproduction naturally resumes. TUNABLE streak threshold.
+            if (_noMateStreak >= NoMateParthenogenesisStreak)
+            {
+                _noMateStreak = 0;
+                _eatsSinceReproduction = 0;
+                _reproCooldownTimer = cooldown;
+                GameLog.LogBirth(communityId);
+                Debug.Log($"[Reproduction] {name} community={communityId} — no mate after {NoMateParthenogenesisStreak} attempts; facultative parthenogenesis (asexual clone).");
+                Reproduce(null);
+            }
+            return;
+        }
 
+        _noMateStreak = 0; // mate found — sexual reproduction proceeds normally
         _eatsSinceReproduction = 0;
+        _reproCooldownTimer = cooldown;
+        GameLog.LogBirth(communityId);
+        Debug.Log($"[EvoSim] BIRTH sexual community={communityId} pop_global={_spawner?.ActiveAgents.Count}");
         Reproduce(mate);
+    }
+
+    private int _noMateStreak;
+    private const int NoMateParthenogenesisStreak = 3; // failed fill-cycles before an asexual fallback clone
+
+    /// Enters/maintains a density-dependent dispersal journey for motile agents. Called each tick
+    /// from Update() after UpdatePressureVariables() has refreshed the local-crowding signal.
+    private void UpdateDispersalState()
+    {
+        if (!HasMotility) return;
+
+        if (_dispersalTimer > 0f)
+        {
+            _dispersalTimer -= Time.deltaTime;
+            // Journey cost — dispersal is a real energetic gamble, not a free relocation.
+            _solarEnergy = Mathf.Max(0f, _solarEnergy - DispersalEnergyCostPerSec * Time.deltaTime);
+            _chemEnergy  = Mathf.Max(0f, _chemEnergy  - DispersalEnergyCostPerSec * Time.deltaTime);
+            return;
+        }
+
+        _dispersalCheckTimer -= Time.deltaTime;
+        if (_dispersalCheckTimer > 0f) return;
+        _dispersalCheckTimer = DispersalCheckInterval;
+
+        // Density-dependent trigger: only crowded, well-fed adults disperse. A starving or
+        // sparsely-surrounded organism has no reason to gamble on a long journey.
+        float pressure = _localSameCommunity / (float)DispersalCrowdCap;
+        float reserveFrac = Mathf.Max(_chemEnergy, _solarEnergy) / Mathf.Max(maxSolarEnergy, 0.001f);
+        if (pressure < DispersalPressureThresh || reserveFrac < 0.5f) return;
+        // era3-primitives-spec §2.2: boldness raises willingness to disperse into unknown habitat —
+        // a bold organism gambles on the journey more readily; a shy one needs more pressure to move.
+        float boldDispersalMult = Mathf.Lerp(0.5f, 1.6f, Mathf.Clamp01(boldness / 100f));
+        if (Random.value > DispersalChancePerCheck * boldDispersalMult) return;
+
+        _dispersalDir = ComputeDispersalDirection();
+        if (_dispersalDir.sqrMagnitude < 0.0001f) return;
+        _dispersalTimer = DispersalDuration;
+        GameLog.LogDispersal(communityId); // Priority 4: per-interval dispersal rate rollup
+        if (!_dispersalLogged)
+        {
+            _dispersalLogged = true;
+            Debug.Log($"[EvoSim] DISPERSAL agent={name} community={communityId} localKin={_localSameCommunity} " +
+                      $"pressure={pressure:F2} — beginning long-range dispersal journey away from cluster.");
+        }
+    }
+
+    /// World-space direction pointing AWAY from the local same-community centroid (toward open
+    /// space), projected onto the surface tangent plane. Random direction if no kin are nearby.
+    private Vector3 ComputeDispersalDirection()
+    {
+        Vector3 normal = (transform.position - planetCenter).normalized;
+        Vector3 away;
+        if (_spawner != null)
+        {
+            Vector3 kinCentroid = Vector3.zero; int n = 0;
+            const float scan = 8f;
+            _spawner.QueryNearby(transform.position, scan, _queryBuffer);
+            foreach (var a in _queryBuffer)
+            {
+                if (a == null || a == this || a.communityId != communityId) continue;
+                kinCentroid += a.transform.position; n++;
+            }
+            away = n > 0 ? (transform.position - kinCentroid / n) : Random.onUnitSphere;
+        }
+        else away = Random.onUnitSphere;
+
+        Vector3 tangent = away - Vector3.Dot(away, normal) * normal;
+        if (tangent.sqrMagnitude < 0.0001f) tangent = Vector3.Cross(normal, Random.onUnitSphere);
+        return tangent.normalized;
+    }
+
+    /// Current surface-tangent heading for an in-progress dispersal journey (re-projected each tick
+    /// as the agent moves around the sphere).
+    private Vector3 ComputeDispersalTangent()
+    {
+        Vector3 normal = (transform.position - planetCenter).normalized;
+        Vector3 tangent = _dispersalDir - Vector3.Dot(_dispersalDir, normal) * normal;
+        return tangent.sqrMagnitude < 0.0001f ? _heading : tangent.normalized;
     }
 
     private void UpdateProducer()
@@ -1044,19 +1822,48 @@ public class AgentController : MonoBehaviour
             // Flee dominates: ignore comfort/sun, just run.
             desiredTangent = fleeDir;
         }
+        else if (IsDispersing)
+        {
+            // Dispersal overrides foraging/social/mate pulls: a committed directed journey away
+            // from the saturated home cluster toward open space (yields only to flee, handled below).
+            desiredTangent = fleeWeight > 0f
+                ? (ComputeDispersalTangent() * (1f - fleeWeight) + fleeDir * fleeWeight).normalized
+                : ComputeDispersalTangent();
+        }
         else
         {
             // Normal producer movement, blended with partial flee if needed.
             Vector3 forageTangent = Metabolism == MetabolismType.Phototrophic
                 ? ComputeProducerMovementTangent()
-                : ComputeWanderTangent();
-            // Social aggregation pull (zero if solitary)
-            Vector3 socialBias = ComputeSocialAggregationBias();
-            float socialWeight = Sociality == SocialityBaseline.GroupForming ? 0.25f
-                               : Sociality == SocialityBaseline.Aggregating  ? 0.15f : 0f;
+                : (HasMotility ? ComputeVentSeekTangent() : ComputeWanderTangent());
+            // Social/formation pull (zero if solitary) — Era 2 social structure overrides the Era 1
+            // baseline where the community has actually chosen one; otherwise falls back to it.
+            Vector3 socialBias = ComputeFormationBias(out float socialWeight);
             Vector3 baseTangent = socialWeight > 0f && socialBias.sqrMagnitude > 0.01f
                 ? (forageTangent * (1f - socialWeight) + socialBias * socialWeight).normalized
                 : forageTangent;
+            // Territorial tether: LooseRange/StrictSite communities pull back toward their home site
+            // once far enough outside it. Nomadic communities (the default/original behavior) are
+            // completely unaffected — this only activates once TerritorialityManager has settled a
+            // community, so it's additive, not a behavior change for anyone who stays nomadic.
+            baseTangent = ApplyTerritorialBias(baseTangent);
+
+            // Mate-seeking: sexual organisms that are energetically ready to reproduce
+            // bias movement toward the nearest eligible mate. Overrides foraging but yields
+            // to flee; weight drops to zero once a mate is already within sense range.
+            if (IsSexual && _eatsSinceReproduction >= eatsToReproduce && FindMateInRange() == null)
+            {
+                AgentController target = FindNearestMate();
+                if (target != null)
+                {
+                    Vector3 norm = (transform.position - planetCenter).normalized;
+                    Vector3 toMate = (target.transform.position - transform.position);
+                    Vector3 mateTangent = (toMate - Vector3.Dot(toMate, norm) * norm).normalized;
+                    if (mateTangent.sqrMagnitude > 0.01f)
+                        baseTangent = Vector3.Slerp(baseTangent, mateTangent, 0.6f).normalized;
+                }
+            }
+
             desiredTangent = fleeWeight > 0f
                 ? (baseTangent * (1f - fleeWeight) + fleeDir * fleeWeight).normalized
                 : baseTangent;
@@ -1068,7 +1875,8 @@ public class AgentController : MonoBehaviour
         float eraMult = EraManager.Instance != null ? EraManager.Instance.MoveSpeedMultiplier : 1f;
         float fleeBoost = 1f + fleeWeight * 0.5f;
         Vector3 newPos = SphereSurface.MoveAlongSurface(transform.position, _heading,
-            moveSpeed * eraMult * fleeBoost * Time.deltaTime, planetCenter, planetRadius);
+            moveSpeed * eraMult * fleeBoost * globalMoveSpeedScale * Time.deltaTime, planetCenter, planetRadius);
+        newPos = ApplyMediumBoundary(newPos);
         transform.position = newPos;
         AlignToSurface();
 
@@ -1080,27 +1888,216 @@ public class AgentController : MonoBehaviour
         }
     }
 
+    // FissionFusion state: periodically flips between "joined" (cohesion bias active) and "solo"
+    // (wanders independently) so the group visibly splits and re-merges over time, matching the real
+    // fission-fusion pattern (chimps, dolphins) rather than a single constant formation.
+    private bool _fissionFusionJoined = true;
+    private float _fissionFusionTimer;
+    private const float FissionFusionPeriod = 25f; // seconds per phase, TUNABLE
+
+    /// Formation bias for this tick: Era 2's SocialStructureType (once the community has chosen one)
+    /// overrides the Era 1 SocialityBaseline formation below it, since it's a more specific, later
+    /// decision — same precedence rule used for herd eligibility. Falls back to the Era 1 baseline
+    /// (GroupForming=schooling / Aggregating=clustering / Solitary=none) otherwise.
+    private Vector3 ComputeFormationBias(out float weight)
+    {
+        SocialStructureType structure = SocialStructureType.Unset;
+        if (Era2Manager.Instance != null)
+            structure = Era2Manager.Instance.GetRecord(communityId)?.SocialStructure ?? SocialStructureType.Unset;
+
+        switch (structure)
+        {
+            case SocialStructureType.PairBonded:
+                weight = 0.30f;
+                return ComputePairBondBias();
+            case SocialStructureType.MultiMemberTroop:
+                weight = 0.30f;
+                return ComputeTroopBias();
+            case SocialStructureType.FissionFusion:
+                return ComputeFissionFusionBias(out weight);
+            // EusocialColonial doesn't need a formation bias here — it's tethered to its colony site
+            // by ApplyTerritorialBias instead (a fixed-site pull is the actually-correct behavior for
+            // workers around a nest, not a moving-flock formation).
+            default:
+                // appearance-generation-spec §3.2: Solitary now gets a real (if subtle) formation
+                // signature too — "Territorial/dispersed: wide, roughly even spacing, minimal
+                // alignment" — rather than zero bias/indifference. Weight kept below Aggregating's
+                // since this is a mild spacing tendency, not active clustering.
+                weight = Sociality == SocialityBaseline.GroupForming ? 0.25f
+                       : Sociality == SocialityBaseline.Aggregating  ? 0.15f : 0.10f;
+                return ComputeSocialAggregationBias();
+        }
+    }
+
+    /// PairBonded: bias toward the single nearest same-community individual (a pair, not a crowd) —
+    /// visually distinct from troop/school formations, which pull toward a many-member centroid.
+    private Vector3 ComputePairBondBias()
+    {
+        if (_spawner == null) return Vector3.zero;
+        float searchR = senseRadius * 2f;
+        _spawner.QueryNearby(transform.position, searchR, _queryBuffer);
+        AgentController nearest = null;
+        float nearestDist = searchR;
+        foreach (var other in _queryBuffer)
+        {
+            if (other == null || other == this || other.communityId != communityId) continue;
+            float dist = SphereSurface.SurfaceDistance(transform.position, other.transform.position, planetCenter, planetRadius);
+            if (dist < nearestDist) { nearestDist = dist; nearest = other; }
+        }
+        if (nearest == null) return Vector3.zero;
+        Vector3 normal = (transform.position - planetCenter).normalized;
+        Vector3 toward = nearest.transform.position - transform.position;
+        return (toward - Vector3.Dot(toward, normal) * normal).normalized;
+    }
+
+    /// MultiMemberTroop: broad cohesion + alignment, same shape as Era 1 schooling but over a wider
+    /// radius — a stable multi-member group, not a tight synchronized shoal.
+    private Vector3 ComputeTroopBias()
+    {
+        if (_spawner == null) return Vector3.zero;
+        float searchR = senseRadius * 3.5f;
+        Vector3 centroid = Vector3.zero, headingSum = Vector3.zero;
+        int count = 0;
+        _spawner.QueryNearby(transform.position, searchR, _queryBuffer);
+        foreach (var other in _queryBuffer)
+        {
+            if (other == null || other == this || other.communityId != communityId) continue;
+            float dist = SphereSurface.SurfaceDistance(transform.position, other.transform.position, planetCenter, planetRadius);
+            if (dist > searchR || dist < 0.5f) continue;
+            centroid += other.transform.position; headingSum += other._heading; count++;
+        }
+        if (count == 0) return Vector3.zero;
+        centroid /= count;
+        Vector3 normal = (transform.position - planetCenter).normalized;
+        Vector3 towardCentroid = (centroid - transform.position);
+        towardCentroid = (towardCentroid - Vector3.Dot(towardCentroid, normal) * normal).normalized;
+        if (headingSum.sqrMagnitude > 0.001f)
+        {
+            Vector3 align = headingSum.normalized;
+            align = (align - Vector3.Dot(align, normal) * normal).normalized;
+            if (align.sqrMagnitude > 0.001f) return (towardCentroid * 0.6f + align * 0.4f).normalized;
+        }
+        return towardCentroid;
+    }
+
+    /// FissionFusion: alternates between joining a subgroup (troop-style cohesion) and going solo
+    /// (zero bias, independent wander) every FissionFusionPeriod seconds — the group visibly splits
+    /// and re-merges over time instead of holding one constant formation.
+    private Vector3 ComputeFissionFusionBias(out float weight)
+    {
+        _fissionFusionTimer += Time.deltaTime;
+        if (_fissionFusionTimer >= FissionFusionPeriod)
+        {
+            _fissionFusionTimer = 0f;
+            _fissionFusionJoined = !_fissionFusionJoined;
+        }
+        if (!_fissionFusionJoined) { weight = 0f; return Vector3.zero; }
+        weight = 0.25f;
+        return ComputeTroopBias();
+    }
+
+    /// Territorial tether (orthogonal to social structure): once TerritorialityManager has settled
+    /// this community into LooseRange or StrictSite, pull back toward the home site when outside its
+    /// radius. Nomadic communities (including everyone before TerritorialityManager first evaluates)
+    /// are completely unaffected — this never fires until a community has actually settled.
+    private Vector3 ApplyTerritorialBias(Vector3 baseTangent)
+    {
+        if (TerritorialityManager.Instance == null) return baseTangent;
+        TerritorialityRecord rec = TerritorialityManager.Instance.GetRecord(communityId);
+        if (rec == null || rec.Strictness == TerritorialityStrictness.Nomadic) return baseTangent;
+
+        float distFromHome = SphereSurface.SurfaceDistance(transform.position, rec.HomeSite, planetCenter, planetRadius);
+        if (distFromHome <= rec.HomeRadius) return baseTangent;
+
+        Vector3 normal = (transform.position - planetCenter).normalized;
+        Vector3 towardHome = rec.HomeSite - transform.position;
+        towardHome = (towardHome - Vector3.Dot(towardHome, normal) * normal).normalized;
+        if (towardHome.sqrMagnitude < 0.0001f) return baseTangent;
+
+        // Pull strength scales with how far outside the range the agent has strayed, and is much
+        // stronger for a StrictSite (colony workers stay close) than a LooseRange (loose ecosystem
+        // range — a gentle nudge back, not a hard wall).
+        float overshoot = Mathf.Clamp01((distFromHome - rec.HomeRadius) / rec.HomeRadius);
+        float pullStrength = rec.Strictness == TerritorialityStrictness.StrictSite
+            ? Mathf.Lerp(0.4f, 0.9f, overshoot)
+            : Mathf.Lerp(0.1f, 0.4f, overshoot);
+        return (baseTangent * (1f - pullStrength) + towardHome * pullStrength).normalized;
+    }
+
     /// Aggregating/GroupForming sociality: bias heading toward the centroid of nearby
     /// same-community members. Blended with other drives — it nudges, not forces.
+    /// Herd/group formation as an appearance+behavior output (appearance-generation-spec §4.2).
+    /// The formation TOPOLOGY differs by social pattern: GroupForming lineages SCHOOL — tight
+    /// cohesion plus heading alignment, so the group moves as an oriented shoal; Aggregating
+    /// lineages merely CLUSTER (cohesion, no alignment) — a loose defensive huddle; Solitary
+    /// lineages don't aggregate at all (separation keeps them dispersed with even spacing).
     private Vector3 ComputeSocialAggregationBias()
     {
-        if (Sociality == SocialityBaseline.Solitary || _spawner == null) return Vector3.zero;
+        if (_spawner == null) return Vector3.zero;
+        if (Sociality == SocialityBaseline.Solitary) return ComputeTerritorialDispersionBias();
         float searchR = senseRadius * (Sociality == SocialityBaseline.GroupForming ? 3f : 2f);
         Vector3 centroid = Vector3.zero;
+        Vector3 headingSum = Vector3.zero;
         int count = 0;
-        foreach (var other in _spawner.ActiveAgents)
+        _spawner.QueryNearby(transform.position, searchR, _queryBuffer);
+        foreach (var other in _queryBuffer)
         {
             if (other == null || other == this || other.communityId != communityId) continue;
             float dist = SphereSurface.SurfaceDistance(transform.position, other.transform.position, planetCenter, planetRadius);
             if (dist > searchR || dist < 0.5f) continue;
             centroid += other.transform.position;
+            headingSum += other._heading;
             count++;
         }
         if (count == 0) return Vector3.zero;
         centroid /= count;
-        Vector3 towardCentroid = (centroid - transform.position).normalized;
         Vector3 normal = (transform.position - planetCenter).normalized;
-        return (towardCentroid - Vector3.Dot(towardCentroid, normal) * normal).normalized;
+        Vector3 towardCentroid = (centroid - transform.position);
+        towardCentroid = (towardCentroid - Vector3.Dot(towardCentroid, normal) * normal).normalized;
+
+        // Schooling: blend cohesion with alignment to the group's mean heading (oriented shoal).
+        if (Sociality == SocialityBaseline.GroupForming && headingSum.sqrMagnitude > 0.001f)
+        {
+            Vector3 align = headingSum.normalized;
+            align = (align - Vector3.Dot(align, normal) * normal).normalized;
+            if (align.sqrMagnitude > 0.001f)
+                return (towardCentroid * 0.5f + align * 0.5f).normalized;
+        }
+        // Aggregating: loose defensive clustering — cohesion only, no alignment. Boldness further
+        // differentiates position WITHIN the cluster (appearance-generation-spec §3.2 "Defensive
+        // herd: perimeter-weighted density") — bold individuals pull less strongly toward the
+        // centroid (a real defensive-vanguard/edge role), shy individuals pull harder toward it
+        // (protected interior), rather than every member sitting at a uniform cohesion distance.
+        float boldBias = Mathf.Clamp((boldness - 50f) / 50f, -1f, 1f);
+        return towardCentroid * (1f - boldBias * 0.4f);
+    }
+
+    /// Solitary: appearance-generation-spec §3.2 "Territorial/dispersed: wide, roughly even
+    /// spacing, minimal alignment" — active repulsion from nearby same-community individuals
+    /// (maintaining distance), the third named formation signature alongside Schooling
+    /// (GroupForming) and Defensive-herd (Aggregating). A tighter search radius than the clustering
+    /// baselines: this only reacts to genuinely close neighbors (crowding), not the whole local
+    /// population, since the point is even spacing, not group cohesion of any kind.
+    private Vector3 ComputeTerritorialDispersionBias()
+    {
+        float searchR = senseRadius * 1.5f;
+        Vector3 centroid = Vector3.zero;
+        int count = 0;
+        _spawner.QueryNearby(transform.position, searchR, _queryBuffer);
+        foreach (var other in _queryBuffer)
+        {
+            if (other == null || other == this || other.communityId != communityId) continue;
+            float dist = SphereSurface.SurfaceDistance(transform.position, other.transform.position, planetCenter, planetRadius);
+            if (dist > searchR || dist < 0.001f) continue;
+            centroid += other.transform.position;
+            count++;
+        }
+        if (count == 0) return Vector3.zero;
+        centroid /= count;
+        Vector3 normal = (transform.position - planetCenter).normalized;
+        Vector3 awayFromCentroid = transform.position - centroid;
+        awayFromCentroid = (awayFromCentroid - Vector3.Dot(awayFromCentroid, normal) * normal).normalized;
+        return awayFromCentroid;
     }
 
     // Simple comfort-biased wander for chemosynthetic organisms seeking richer substrate.
@@ -1111,6 +2108,64 @@ public class AgentController : MonoBehaviour
         if (current.sqrMagnitude < 0.0001f) current = Vector3.Cross(normal, Random.onUnitSphere).normalized;
         float randomTurn = Random.Range(-wanderTurnRate, wanderTurnRate) * Time.deltaTime;
         return (Quaternion.AngleAxis(randomTurn, normal) * current).normalized;
+    }
+
+    // Chemotaxis steering weight (0=pure drift, 1=straight to vent). Tunable.
+    private const float VentSteeringWeight = 0.65f;
+
+    /// Gradient-following movement toward the nearest hydrothermal vent, blended with
+    /// random wander so the path is noisy (follows local concentration, not global GPS).
+    /// Only called for motile chemosynthetic producers — creates real selection pressure
+    /// on sensory/motor genes once those add to detection radius.
+    private Vector3 ComputeVentSeekTangent()
+    {
+        Vector3 wander = ComputeWanderTangent();
+        var ventMgr = HydrothermalVentManager.Instance;
+        if (ventMgr == null || !ventMgr.NearestVent(transform.position, out Vector3 ventPos))
+            return wander;
+
+        // Already at or inside the vent — wander within the hotspot.
+        if (Vector3.Distance(transform.position, ventPos) < 1.5f)
+            return wander;
+
+        Vector3 normal = (transform.position - planetCenter).normalized;
+        Vector3 toVent = ventPos - transform.position;
+        Vector3 ventTangent = (toVent - Vector3.Dot(toVent, normal) * normal).normalized;
+        if (ventTangent.sqrMagnitude < 0.001f) return wander;
+
+        return Vector3.Slerp(wander, ventTangent, VentSteeringWeight).normalized;
+    }
+
+    /// Estimates whether switching to photosynthesis would actually be energy-positive at THIS
+    /// agent's current position and world (star luminosity, orbit distance, atmosphere, depth) —
+    /// used to gate photosynthesis adoption so lineages don't blindly convert on light-starved
+    /// worlds (e.g. a near-zero-luminosity red dwarf) and strand themselves with no viable energy
+    /// source. Uses a day-averaged solar term (0.5, half the planet is always lit) rather than the
+    /// instantaneous value, since the adoption decision is a standing lineage choice, not a per-tick
+    /// one. Returns true if projected net energy would be positive with a small safety margin.
+    public bool IsPhotosynthesisLocallyViable()
+    {
+        const float dayAveragedSolar = 0.5f;
+        float atmosTransparency = AtmosphereManager.Instance != null
+            ? Mathf.Clamp01(2f / Mathf.Max(AtmosphereManager.Instance.PressureBar, 0.1f))
+            : 1f;
+        float photicAttenuation = Mathf.Exp(-PhoticExtinctionCoeff * _currentLiquidDepth);
+        float photoSizeScale = Mathf.Pow(Mathf.Max(transform.localScale.x, 0.001f) / 0.05f, 0.80f);
+        float projectedAcq = solarChargeRate * dayAveragedSolar * WorldSolarFluxFactor * atmosTransparency
+                              * PhotoEfficiency * photoSizeScale * photicAttenuation;
+        // Two conditions must BOTH hold to justify abandoning a working energy source:
+        //  (1) photosynthesis covers demand with a 20% safety margin (absolute viability), and
+        //  (2) photosynthesis actually OUT-YIELDS the chemosynthesis being given up, by 15% (relative
+        //      viability). Condition (2) is the fix for the recurring death spiral: previously only
+        //      (1) was checked, so on chemo-rich worlds (rich vents, high-SO2 atmospheres) organisms
+        //      switched from a high chemo income to a barely-sufficient photo income and slowly
+        //      starved — worst on hot worlds where Q10 inflates demand toward the photo ceiling.
+        //  _lastChemoAbsorb is 0 for a lineage that has never run chemosynthesis (e.g. seeded photo),
+        //  which makes (2) trivially true and correctly falls back to the demand-only test.
+        float demand = ComputeDemand();
+        bool coversDemand = projectedAcq >= demand * 1.2f;
+        bool beatsChemo   = projectedAcq >= _lastChemoAbsorb * 1.15f;
+        return coversDemand && beatsChemo;
     }
 
     /// Solar charging and reproduction logic shared between motile producers (UpdateProducer)
@@ -1130,17 +2185,26 @@ public class AgentController : MonoBehaviour
         float atmosTransparency = AtmosphereManager.Instance != null
             ? Mathf.Clamp01(2f / Mathf.Max(AtmosphereManager.Instance.PressureBar, 0.1f))
             : 1f;
+        float photoSizeScale = Mathf.Pow(Mathf.Max(transform.localScale.x, 0.001f) / 0.05f, 0.80f);
+        // Beer-Lambert photic-zone attenuation: light falls off exponentially with liquid depth,
+        // so shallow/surface phototrophs get full irradiance while deep-water ones are starved.
+        // This is what differentiates the phototroph niche (shallow) from the chemotroph niche
+        // (deep, near vents) instead of both competing for the same space.
+        float photicAttenuation = Mathf.Exp(-PhoticExtinctionCoeff * _currentLiquidDepth);
         float photoAcq = solarChargeRate * solar * WorldSolarFluxFactor * atmosTransparency
-                         * PhotoEfficiency * PhotosyntheticSurfaceArea();
-        float photoNet = photoAcq - ComputeDemand();
+                         * PhotoEfficiency * photoSizeScale * photicAttenuation;
+        float demandNow = ComputeDemand();
+        float photoNet = photoAcq - demandNow;
+        NetEnergy = photoNet;
+        if (!_photoMetabolismLogged) { _photoMetabolismLogged = true; Debug.Log($"[EvoSim] PhotoMeta: irradiance={solar * WorldSolarFluxFactor:F3} atten={photicAttenuation:F3} absorb={photoAcq:F4} demand={demandNow:F4} net={photoNet:F4} depth={_currentLiquidDepth:F3} eff={PhotoEfficiency:F3}"); }
         _solarEnergy += photoNet * Time.deltaTime;
         _solarEnergy = Mathf.Clamp(_solarEnergy, 0f, maxSolarEnergy);
         ApplyGrowthShrinkage(photoNet);
 
         if (_solarEnergy <= 0f)
-            Die();
+            Die(EnergyDeathCause());
 
-        if (_solarEnergy >= maxSolarEnergy * 0.95f)
+        if (_solarEnergy >= maxSolarEnergy * 0.90f)
         {
             _solarEnergy = maxSolarEnergy * 0.5f;
             _eatsSinceReproduction++;
@@ -1163,8 +2227,19 @@ public class AgentController : MonoBehaviour
 
         // Net energy: absorption (scales with local nutrient density) minus metabolic drain
         // (scales with all environmental stressors).
-        float absorbRate = solarChargeRate * nutrients * ChemoEfficiency * GibbsFactor() * UptakeSurfaceArea();
-        float chemoNet = absorbRate - ComputeDemand();
+        // Absorb ∝ scale^0.80: larger surface area per West/Brown/Enquist; anchored to spawn scale so
+        // early-era behavior is unchanged, later eras benefit from proportionally higher uptake.
+        float chemoScale = Mathf.Max(transform.localScale.x, 0.001f);
+        float chemoSizeScale = Mathf.Pow(chemoScale / 0.05f, 0.80f);
+        float absorbRate = solarChargeRate * nutrients * ChemoEfficiency * GibbsFactor() * chemoSizeScale * ContestUptakeMultiplier();
+        _lastChemoAbsorb = absorbRate; // cache for the photosynthesis-switch viability comparison
+        float demand = ComputeDemand();
+        float chemoNet = absorbRate - demand;
+        NetEnergy = chemoNet;
+        if (!_metabolismLogged) { _metabolismLogged = true; Debug.Log($"[EvoSim] ChemoMeta: nutrients={nutrients:F3} absorb={absorbRate:F4} demand={demand:F4} net={chemoNet:F4} eff={ChemoEfficiency:F3} gibbs={GibbsFactor():F3}"); }
+        // Log chronic starvation as a reproduction blocker (~once per 10s per agent to avoid spam)
+        if (chemoNet < 0f && _chemEnergy < maxSolarEnergy * 0.1f && Mathf.FloorToInt(Time.time * 0.1f) % 10 == 0)
+            GameLog.LogReproFail(communityId, "Starving");
         _chemEnergy += chemoNet * Time.deltaTime;
         _chemEnergy  = Mathf.Clamp(_chemEnergy, 0f, maxSolarEnergy);
         ApplyGrowthShrinkage(chemoNet);
@@ -1174,9 +2249,9 @@ public class AgentController : MonoBehaviour
             ChemicalNutrientPool.Deplete(transform.position, absorbRate * 0.0008f * Time.deltaTime);
 
         if (_chemEnergy <= 0f)
-            Die();
+            Die(EnergyDeathCause());
 
-        if (_chemEnergy >= maxSolarEnergy * 0.95f)
+        if (_chemEnergy >= maxSolarEnergy * 0.90f)
         {
             _chemEnergy = maxSolarEnergy * 0.5f;
             _eatsSinceReproduction++;
@@ -1200,8 +2275,9 @@ public class AgentController : MonoBehaviour
         }
         float atmosTransparency = AtmosphereManager.Instance != null
             ? Mathf.Clamp01(2f / Mathf.Max(AtmosphereManager.Instance.PressureBar, 0.1f)) : 1f;
+        float mixoSizeScale = Mathf.Pow(Mathf.Max(transform.localScale.x, 0.001f) / 0.05f, 0.80f);
         float mixoPhotoAcq = solarChargeRate * 0.7f * solar * WorldSolarFluxFactor * atmosTransparency
-                             * PhotoEfficiency * PhotosyntheticSurfaceArea();
+                             * PhotoEfficiency * mixoSizeScale;
         float mixoNet = mixoPhotoAcq - ComputeDemand() * 0.5f;
         _solarEnergy += mixoNet * Time.deltaTime;
         _solarEnergy = Mathf.Clamp(_solarEnergy, 0f, maxSolarEnergy);
@@ -1217,10 +2293,10 @@ public class AgentController : MonoBehaviour
         // Survive from either source
         bool canSurviveSolar = _solarEnergy > 0f;
         bool canSurviveOsmo  = _timeSinceLastMeal < starvationTime;
-        if (!canSurviveSolar && !canSurviveOsmo) { Die(); return; }
+        if (!canSurviveSolar && !canSurviveOsmo) { Die(EnergyDeathCause()); return; }
 
         // Reproduce when solar is full
-        if (_solarEnergy >= maxSolarEnergy * 0.95f)
+        if (_solarEnergy >= maxSolarEnergy * 0.90f)
         {
             _solarEnergy = maxSolarEnergy * 0.5f;
             _eatsSinceReproduction++;
@@ -1237,12 +2313,30 @@ public class AgentController : MonoBehaviour
     {
         float nutrients = ChemicalNutrientPool.Sample(transform.position);
         float osmotrophySlowdown = Mathf.Clamp01(nutrients * 0.35f);
+        float absorbed = 0f;
         if (nutrients > 0.01f)
-            ChemicalNutrientPool.Deplete(transform.position, 0.00005f * Time.deltaTime);
+        {
+            float drain = 0.00005f * Time.deltaTime;
+            ChemicalNutrientPool.Deplete(transform.position, drain);
+            // Convert pool drain into chemical energy. Heterotrophs are less efficient than
+            // chemosynthetics at extracting energy from dissolved organics.
+            absorbed = nutrients * ChemoEfficiency * 0.3f * Time.deltaTime;
+        }
+        float demand = ComputeDemand();
+        NetEnergy = absorbed / Mathf.Max(Time.deltaTime, 1e-4f) - demand; // absorbed is already scaled by dt; normalize back to a per-second rate to match the other metabolism paths
+        _chemEnergy = Mathf.Clamp(_chemEnergy + absorbed - demand * Time.deltaTime, 0f, maxSolarEnergy);
 
-        _timeSinceLastMeal += Time.deltaTime * GetNonClimateFitnessMultipliers() * (1f - osmotrophySlowdown);
-        if (_timeSinceLastMeal >= starvationTime)
-            Die();
+        if (_chemEnergy <= 0f) { Die(EnergyDeathCause()); return; }
+
+        // Reproduce when energy reserve is full — same threshold as chemosynthetics.
+        if (_chemEnergy >= maxSolarEnergy * 0.90f)
+        {
+            _chemEnergy = maxSolarEnergy * 0.5f;
+            _eatsSinceReproduction++;
+            _lifetimeEats++;
+            if (_eatsSinceReproduction >= eatsToReproduce)
+                TryReproduce();
+        }
     }
 
     /// Aggregate of all independent fitness pressures. Used wherever a single drain
@@ -1256,6 +2350,7 @@ public class AgentController : MonoBehaviour
     private const float ActivityMaintenance  = 0.40f; // protected floor — always paid
     private const float ActivityLocoMax      = 0.45f; // active-mobile + chasing prey
     private const float ActivityVigilanceMax = 0.20f; // scales with PredationPressure
+    private const float ActivityContestMax   = 0.15f; // era3-primitives-spec §2.1: interference-competition draw
     // Era 2 additions (gated by gene events — hooks only, filled when events land):
     private const float ActivityCognitiveMax = 0.25f; // Cognitive/Neural (NeuralComplexity gate)
     private const float ActivitySocialMax    = 0.10f; // Social/Coordination (Sociality gate)
@@ -1309,19 +2404,37 @@ public class AgentController : MonoBehaviour
         if (Era2Manager.Instance != null && Era2Manager.Instance.IsActive)
             socialDraw = ActivitySocialMax * Mathf.Clamp01((float)Sociality / 3f);
 
+        // --- Interference-competition draw (era3-primitives-spec §2.1) — only actually costly when
+        // there's something worth contesting: a patchy/defensible resource under real scarcity. A
+        // high-contestPropensity organism on an abundant world pays this for nothing, which is exactly
+        // the "selected against when resources are dispersed" pressure the spec calls for. The
+        // matching BENEFIT lives in ContestUptakeMultiplier(), applied at the nutrient-uptake sites. ---
+        float contestDraw = ActivityContestMax * Mathf.Clamp01(contestPropensity / 100f) * ResourceScarcity;
+
         // --- Proportional reduction if non-Maintenance sum exceeds remaining budget ---
-        float nonMaintTotal = locoDraw + vigilanceDraw + cognitiveDraw + socialDraw;
+        float nonMaintTotal = locoDraw + vigilanceDraw + contestDraw + cognitiveDraw + socialDraw;
         float remaining = 1f - ActivityMaintenance; // budget available to non-Maintenance
         float scale = (nonMaintTotal > remaining) ? remaining / nonMaintTotal : 1f;
 
         return ActivityMaintenance + nonMaintTotal * scale;
     }
 
+    /// era3-primitives-spec §2.1: the payoff side of contestPropensity — interference competitors win
+    /// by DENYING access, not consuming faster, so the bonus only exists when the resource is genuinely
+    /// contested (high local scarcity). A high-contest organism on a low-scarcity world gets no bonus
+    /// here but still pays the Activity Budget draw above — real selection against it in that regime.
+    private float ContestUptakeMultiplier()
+    {
+        float contest01 = Mathf.Clamp01(contestPropensity / 100f);
+        return 1f + (contest01 - 0.5f) * ResourceScarcity * 0.6f; // ±30% at trait extremes under max scarcity
+    }
+
     // ── Kleiber BMR demand (§3 energy spec) ─────────────────────────────────────────────
-    // k constant per backbone chemistry: tuned so a mid-era-scale agent (scale ≈ 0.15,
-    // mass ≈ 0.0034) has a demand comparable to the old flat solarDrainRate (0.5 u/s).
-    // Adjust during playtesting — only internal consistency across size range matters.
-    private static readonly float[] KleiberK = { 0.6f, 0.7f, 0.65f, 0.55f, 0.75f, 0.6f, 0.5f, 0.65f };
+    // k constant per backbone chemistry (Kleiber's Law: demand = K * agentScale^0.75).
+    // Anchored so demand at spawn scale (0.05) matches the prior mass-based calibration
+    // (K_new = K_mass * 0.05^1.5 ≈ K_mass * 0.01118). Bigger organisms cost proportionally
+    // less per unit mass — sublinear scaling as empirically established by West/Brown/Enquist.
+    private static readonly float[] KleiberK = { 0.067f, 0.078f, 0.073f, 0.062f, 0.084f, 0.067f, 0.056f, 0.073f };
     // Q10 per backbone (metabolic rate doubling per 10°C — real ectotherm range 2–3).
     private static readonly float[] BackboneQ10 = { 2.0f, 2.5f, 2.2f, 2.0f, 3.0f, 2.5f, 2.0f, 2.2f };
     // Reference temperature per backbone (°C, from solvent-tolerance optimum tables).
@@ -1346,16 +2459,47 @@ public class AgentController : MonoBehaviour
         // Death if mass falls below viability floor.
         if (_currentMass <= _spawnMass * MassViabilityFloor)
         {
-            Die();
+            Die(DeathCause.MassViabilityFloor);
             return;
         }
 
-        // Sync visual scale — mass scales as volume, so linear scale = cbrt(mass/spawnMass) × spawnScale.
-        float spawnScale = Mathf.Pow(_spawnMass, 1f / 3f);
-        float newScale = Mathf.Pow(_currentMass, 1f / 3f);
-        // Keep within era bounds so mass-growth doesn't override EraManager's visual scale.
-        float eraScale = EraManager.Instance != null ? EraManager.Instance.AgentTargetScale : spawnScale;
-        transform.localScale = Vector3.one * Mathf.Clamp(newScale, eraScale * 0.5f, eraScale * 1.5f);
+        RefreshVisualScale();
+    }
+
+    /// Sets the organism's visual size from three factors: the era's baseline scale, a species
+    /// size class read from its strength trait (so a big tough species is visibly larger than a
+    /// small frail one), and its individual growth state (current vs. spawn mass). Called every
+    /// tick so size always tracks the organism rather than every agent being one uniform era size.
+    private void RefreshVisualScale()
+    {
+        float eraScale = EraManager.Instance != null
+            ? EraManager.Instance.AgentTargetScale
+            : Mathf.Pow(Mathf.Max(_spawnMass, 1e-6f), 1f / 3f);
+
+        // Species size class from strength: weak → ~0.6×, average → 1×, strong → ~1.6× (at influence 0.5).
+        float sizeClass = 1f + (strengthTrait / 100f - 0.5f) * 2f * sizeTraitInfluence;
+
+        // Individual growth: linear scale ∝ cbrt(mass), 1.0 at spawn mass up to ~1.36 at era max.
+        float growth = _spawnMass > 0f
+            ? Mathf.Pow(Mathf.Max(_currentMass, 1e-6f) / _spawnMass, 1f / 3f)
+            : 1f;
+
+        transform.localScale = Vector3.one * Mathf.Max(0.001f, eraScale * sizeClass * growth);
+    }
+
+    /// Deflects a MOTILE organism away from a step that would carry it across the shoreline into its
+    /// non-viable medium (aquatic onto land, or terrestrial into liquid). Most lineages can't freely
+    /// cross the sea/land boundary — they turn back at the water's edge instead of wandering into a
+    /// lethal medium. Strong but not absolute, so a rare amphibious crossing is still possible.
+    private Vector3 ApplyMediumBoundary(Vector3 proposedPos)
+    {
+        var fluid = FluidDynamicsManager.Instance;
+        if (fluid == null) return proposedPos;
+        bool proposedSubmerged = fluid.IsSubmerged(proposedPos);
+        bool proposedViable = _isAquatic ? proposedSubmerged : !proposedSubmerged;
+        if (proposedViable) return proposedPos;
+        _heading = -_heading; // turn back from the shoreline
+        return Vector3.Lerp(transform.position, proposedPos, MediumCrossBias);
     }
 
     // ── Acquisition surface-area helpers (spec §5.3, §6) ────────────────────────────────
@@ -1381,7 +2525,7 @@ public class AgentController : MonoBehaviour
     // this with a per-vent lookup table keyed to reaction pair.
     private float GibbsFactor()
     {
-        return Backbone switch
+        float backboneFactor = Backbone switch
         {
             BackboneElement.Sulfur      => 1.00f, // H₂S oxidation — highest ΔG
             BackboneElement.Carbon      => 0.30f, // H₂ oxidation proxy
@@ -1391,6 +2535,86 @@ public class AgentController : MonoBehaviour
             BackboneElement.Nitrogen    => 0.10f, // methanogenesis — lowest ΔG
             _                           => 0.20f,
         };
+        // Respiration-tier multiplier: primitive/undifferentiated metabolism is deliberately worse
+        // than any specialized pathway (Issue 1); a real evolved anaerobic specialization reaches
+        // full designed efficiency (Issue 2); aerobic respiration yields substantially more once
+        // unlocked — real aerobic respiration yields roughly an order of magnitude more ATP per
+        // glucose than fermentation, which is what historically drove it to dominance (Issue 3).
+        // All TUNABLE — first-pass calibration, not derived from a specific target curve.
+        float tierFactor = RespirationTier switch
+        {
+            RespirationTier.Primitive           => PrimitiveMetabolismPenalty,
+            RespirationTier.SpecializedAnaerobic => 1.00f,
+            RespirationTier.Aerobic             => AerobicYieldMultiplier,
+            _                                    => 1.00f,
+        };
+        return backboneFactor * tierFactor;
+    }
+
+    // ── Respiration evolutionary sequence (Issues 1-3) ────────────────────────────────────
+    public RespirationTier RespirationTier { get; private set; } = RespirationTier.Primitive;
+    private const float PrimitiveMetabolismPenalty = 0.40f; // TUNABLE — deliberately worse than any specialized pathway
+    private const float AerobicYieldMultiplier      = 3.00f; // TUNABLE — real advantage that should drive adoption once unlocked
+    // Three-stage O2 progression, deliberately ORDERED so the escape route opens well before the
+    // threat gets dangerous — real lineages had genuine time to adapt to the GOE, not a synchronized
+    // instant-death moment with the exit locked. Getting this ordering wrong (unlock threshold ==
+    // toxicity-max threshold) was a confirmed real bug: it produced a total, simultaneous population
+    // wipeout the moment O2 appeared, the opposite of the real outcome (life SURVIVED the GOE).
+    public const float AerobicUnlockO2Threshold     = 0.008f; // TUNABLE — AerobicRespiration becomes reachable here
+    private const float ToxicityStartFraction       = 0.012f; // TUNABLE — toxicity is negligible below this (real margin after the escape opens)
+    private const float ToxicityFullFraction         = 0.020f; // TUNABLE — toxicity reaches full severity here, well after escape was available
+
+    /// Issue 2: evolve into a real anaerobic pathway (Methanogenesis, SulfateReduction, etc.) keyed
+    /// to whichever substrate this agent's lineage actually has locally — an OR-gate branch, not a
+    /// single hardcoded swap target. Distinct lineages under different local substrate availability
+    /// can genuinely diverge, since each agent's breathed/expelled pair is its own field (already
+    /// inherited/mutable per-agent, not a single world-wide constant).
+    public void SpecializeAnaerobic(string breathedGas, string expelledGas, string pathwayGeneId)
+    {
+        if (RespirationTier != RespirationTier.Primitive) return; // already specialized or aerobic
+        _breathedGasName = breathedGas;
+        _expelledGasName = expelledGas;
+        RespirationTier = RespirationTier.SpecializedAnaerobic;
+        if (AtmosphereManager.Instance != null)
+            _idealGasMix = AtmosphereManager.Instance.SnapshotMix();
+        Debug.Log($"[Biochemistry] {name} specialized into {pathwayGeneId}: breathes {_breathedGasName}, expels {_expelledGasName} (tier=SpecializedAnaerobic).");
+    }
+
+    /// Issue 3: late unlock, gated on atmospheric O2 in GeneCatalog's IsEligible (not here) — this
+    /// just applies the switch once the gate has already been satisfied. Real energetic advantage
+    /// (AerobicYieldMultiplier) is what should drive it to dominance once available, mirroring the
+    /// real Great Oxidation Event / aerobic respiration's actual historical trajectory.
+    public void BecomeAerobic()
+    {
+        if (RespirationTier == RespirationTier.Aerobic) return;
+        _breathedGasName = "O2";
+        _expelledGasName = "CO2";
+        RespirationTier = RespirationTier.Aerobic;
+        if (AtmosphereManager.Instance != null)
+            _idealGasMix = AtmosphereManager.Instance.SnapshotMix();
+        Debug.Log($"[Biochemistry] {name} evolved AerobicRespiration: breathes O2, expels CO2 (tier=Aerobic, yield×{AerobicYieldMultiplier:F1}).");
+    }
+
+    /// Oxygen toxicity (Issue 3): as atmospheric O2 rises toward/past the aerobic unlock threshold,
+    /// organisms that haven't adapted (no AerobicRespiration, tier still Primitive/SpecializedAnaerobic)
+    /// pay a real, escalating cost — the Great Oxidation Event was a mass-extinction pressure for
+    /// existing anaerobic life, not just a free new opportunity sitting unused. Reuses the same
+    /// quadratic-ramp pattern already established for breathed-gas deficit (CheckGasSurvival's
+    /// GAS_DEFICIT), per the spec's explicit request to reuse that cost model rather than invent a
+    /// second one. TUNABLE.
+    private float ComputeOxygenToxicityCost()
+    {
+        if (RespirationTier == RespirationTier.Aerobic) return 0f; // adapted — no toxicity cost
+        // Retreated to anoxic refuges (the pre-existing EfficientRespiration "Path B" choice at the
+        // Great Gas Event) — by definition no longer exposed to atmospheric O2, so no toxicity cost.
+        // This is also the real escape route for backbones where O2 is outright lethal (Silicon/
+        // Germanium/Tin/Boron/Phosphorus — see WouldGasBeLethal) and can never take the aerobic path.
+        if (IsAnoxicRefugeLineage) return 0f;
+        if (AtmosphereManager.Instance == null) return 0f;
+        float o2Frac = AtmosphereManager.Instance.GetFraction("O2");
+        if (o2Frac <= ToxicityStartFraction) return 0f; // negligible trace O2 — real toxicity pressure only builds as it approaches crisis level, not from any nonzero amount
+        float severity = Mathf.Clamp01((o2Frac - ToxicityStartFraction) / (ToxicityFullFraction - ToxicityStartFraction));
+        return severity * severity * 0.40f; // same deficit²×0.40 shape as GAS_DEFICIT drain
     }
 
     /// Metabolic demand per second: Kleiber BMR × Q10 temperature scaling × surviving fitness multipliers.
@@ -1398,7 +2622,9 @@ public class AgentController : MonoBehaviour
     public float ComputeDemand()
     {
         int bIdx = Mathf.Clamp((int)Backbone, 0, KleiberK.Length - 1);
-        float bmr = KleiberK[bIdx] * Mathf.Pow(Mathf.Max(_currentMass, 0.0001f), 0.75f);
+        // Kleiber: demand ∝ agentScale^0.75 (not mass^2.25 — scale is the linear dimension)
+        float agentScaleDemand = Mathf.Max(transform.localScale.x, 0.001f);
+        float bmr = KleiberK[bIdx] * Mathf.Pow(agentScaleDemand, 0.75f);
 
         float localTemp = ClimateManager.GetTemperature(transform.position);
         float q10 = BackboneQ10[bIdx];
@@ -1408,8 +2634,29 @@ public class AgentController : MonoBehaviour
 
         // Activity Budget replaces flat activity multiplier; non-climate fitness penalties stack on top.
         // Climb cost (mgh) is additive — it is a discrete physics cost, not a budget fraction.
-        return bmr * q10Mult * ResolveActivityBudget() * GetNonClimateFitnessMultipliers() + ComputeClimbCost();
+        // Oxygen toxicity (Issue 3) is likewise additive, same treatment as climb cost — a real
+        // physical burden on unadapted organisms as O2 rises, not a multiplicative budget fraction.
+        float demand = bmr * q10Mult * ResolveActivityBudget() * GetNonClimateFitnessMultipliers()
+                       + ComputeClimbCost() + ComputeOxygenToxicityCost();
+
+        // Emergency dormancy (FounderSurvivalManager): metabolic shutdown bought at the cost of
+        // reproduction, giving a founder lineage on the brink of extinction time to stabilize
+        // instead of finishing the death spiral. See _dormancyTimer for activation.
+        if (_dormancyTimer > 0f) demand *= DormancyDemandMultiplier;
+
+        return demand;
     }
+
+    // ── Emergency dormancy (founder-crisis survival mechanic) ─────────────────────────────
+    private float _dormancyTimer;
+    private const float DormancyDemandMultiplier = 0.25f; // metabolic shutdown, TUNABLE
+    public bool IsDormant => _dormancyTimer > 0f;
+
+    /// Puts this agent into emergency dormancy for `seconds`: demand drops sharply (metabolic
+    /// shutdown) but reproduction is suppressed for the same window (see TryReproduce) — the
+    /// lineage survives at reduced numbers/growth rather than at full strength. Re-applying while
+    /// already dormant extends the timer rather than stacking the multiplier.
+    public void EnterDormancy(float seconds) => _dormancyTimer = Mathf.Max(_dormancyTimer, seconds);
 
     /// All fitness multipliers EXCEPT climate-starvation — that is replaced by Q10 scaling above.
     private float GetNonClimateFitnessMultipliers()
@@ -1449,12 +2696,28 @@ public class AgentController : MonoBehaviour
         foreach (var gas in AtmosphereManager.Instance.Gases)
             if (gas.Name == _breathedGasName) { fraction = gas.Fraction; break; }
 
-        if (fraction < 0.02f) { Die(); return; }
         if (fraction >= _minBreathableFraction) return;
+        if (fraction < 0.02f) fraction = 0f;
 
-        // Extra metabolic drain proportional to how far below the minimum the gas has dropped.
+        // Extra metabolic drain that ramps QUADRATICALLY with how far below the minimum the gas
+        // has dropped. Mild depletion (deficit≈0.5 → ~0.10/s) is survivable and mostly offset by
+        // metabolism, but severe depletion (gas→0, deficit→1 → ~0.40/s) outruns typical absorb
+        // (~0.165/s), forcing net-negative energy. Previously this was a flat 0.15/s that a healthy
+        // producer fully offset — so a total gas collapse (e.g. H2S→0%) had no observable effect and
+        // exerted no selection pressure to adapt. The quadratic ramp makes non-adaptation genuinely
+        // costly under crisis while leaving ordinary drift survivable, which is what turns
+        // respiration specialization (Methanogenesis/SulfurRespiration/etc.) from optional flavor
+        // into a real evolutionary escape.
         float deficit     = 1f - fraction / _minBreathableFraction;
-        float extraDrain  = deficit * 0.8f * Time.deltaTime;
+        float extraDrain  = deficit * deficit * 0.40f * Time.deltaTime;
+
+        if (!_gasDeficitLogged && deficit > 0.5f)
+        {
+            _gasDeficitLogged = true;
+            Debug.Log($"[EvoSim] GAS_DEFICIT agent={name} community={communityId} breathes={_breathedGasName} " +
+                      $"fraction={fraction:F3} minBreathable={_minBreathableFraction:F3} deficit={deficit:F2} " +
+                      $"drain/s={deficit * deficit * 0.40f:F3} — adapt (respiration specialization) or decline.");
+        }
 
         if (!IsProducer)
             _timeSinceLastMeal += extraDrain;
@@ -1464,6 +2727,7 @@ public class AgentController : MonoBehaviour
             _chemEnergy  -= extraDrain;
         }
     }
+    private bool _gasDeficitLogged;
 
     /// Backbone-dependent lethal gas check. Some atmospheres are structurally destructive
     /// to non-carbon backbones: O2 fossilizes Si/Ge/Sn, ignites B/P; F2 destroys C/B/N/P/S.
@@ -1493,6 +2757,12 @@ public class AgentController : MonoBehaviour
             }
         }
     }
+
+    /// Public wrapper so gene eligibility checks (GeneCatalog) can veto a respiration specialization
+    /// that would have the organism breathe something lethal to its own backbone chemistry — e.g. F2
+    /// is lethal to Carbon, O2 is lethal to Silicon/Germanium/Tin/Boron/Phosphorus. Without this, a
+    /// specialization gene could offer a fatal substrate as if it were a fitness win.
+    public bool WouldGasBeLethal(string gasName) => IsGasLethalForBackbone(gasName, Backbone);
 
     private static bool IsGasLethalForBackbone(string gasName, BackboneElement backbone)
     {
@@ -1569,7 +2839,7 @@ public class AgentController : MonoBehaviour
             else
                 _noMateTimer = 0f;
         }
-        if (_noMateTimer >= starvationTime * 3f) { Die(); }
+        if (_noMateTimer >= starvationTime * 3f) { Die(DeathCause.SexualIsolation); }
     }
 
     // ── Medium mismatch — tolerance-band survivable-duration (addendum §2.4) ────────────
@@ -1600,7 +2870,7 @@ public class AgentController : MonoBehaviour
         // Range: hardiness=0 → 15s ceiling; hardiness=100 → 45s; hardiness=200 → 90s.
         float ceiling = MismatchBaseDeadlineSecs * (0.5f + hardinessTrait / 100f);
         if (_mediumMismatchExposure >= ceiling)
-            Die();
+            Die(DeathCause.MediumMismatch);
     }
 
     /// UV radiation damage. Day-side organisms without UV tolerance take faster metabolic
@@ -1707,9 +2977,74 @@ public class AgentController : MonoBehaviour
     {
         float temp = ClimateManager.GetTemperature(position);
         float moisture = ClimateManager.GetMoisture(position);
-        float tempDiff = Mathf.Abs(temp - temperaturePreference) / 100f;
-        float moistureDiff = Mathf.Abs(moisture - moisturePreference) / 100f;
+
+        // TOLERANCE BAND (plateau): organisms have a comfortable RANGE around their preferred value,
+        // not a razor-point optimum. Within ±band, discomfort is zero; only beyond it does mismatch
+        // start to cost fitness. Band width scales with hardiness — a generalist (eurytherm) tolerates
+        // wide swings, a specialist (stenotherm) only a narrow range. Without this plateau, ANY
+        // deviation from the exact preferred temperature caused immediate fitness loss, so every
+        // species behaved like an extreme stenotherm and the world's large temperature swings wiped
+        // populations out regardless of how well-adapted they were.
+        float band = Mathf.Lerp(toleranceBandNarrow, toleranceBandWide, hardinessTrait / 100f);
+        float tempDiff     = Mathf.Max(0f, Mathf.Abs(temp - temperaturePreference) - band) / 100f;
+        float moistureDiff = Mathf.Max(0f, Mathf.Abs(moisture - moisturePreference) - band) / 100f;
         return Mathf.Clamp01((tempDiff + moistureDiff) / 2f);
+    }
+
+    /// LandColonization gene: the lineage's locked habitat flips from aquatic to terrestrial. Without
+    /// this every organism stays permanently aquatic (the pre-existing state — _isAquatic was never
+    /// flipped anywhere), which is why "land species" never actually existed: agents merely stood on
+    /// dry ground temporarily while still counting as aquatic and taking a desiccation penalty. This
+    /// is the real, heritable transition — moisture preference swings dry, medium-mismatch penalties
+    /// invert (now land is home, sea is the hazard), and land-only content (e.g. Fire Mastery) opens up.
+    public void ColonizeLand()
+    {
+        if (!_isAquatic) return;
+        _isAquatic = false;
+        moisturePreference = Mathf.Clamp(PopulationStats.SampleDimension(20f, 15f), 0f, 100f); // dry-favoring
+        LocomotionMedium = HasMotility ? LocomotionMedium.Terrestrial : LocomotionMedium.Aquatic;
+        AcquiredGenes.Add("LandColonization");
+        Debug.Log($"[Habitat] {name} colonized land (moisturePref→{moisturePreference:F0}).");
+    }
+
+    /// DEBUG: instantly relocates this agent to a point matching its CURRENT habitat (_isAquatic) —
+    /// wet if aquatic, dry if terrestrial. Used only by the Era-skip debug path: colonizing land is
+    /// normally a gradual, lived transition (the organism walks/drifts there over real time), but an
+    /// instant gene-skip leaves land-colonized organisms stranded wherever they happened to be —
+    /// visually still sitting in the sea despite "Medium: Land" in the HUD. Scatter-searches random
+    /// surface points and jumps to the first one whose wet/dry state matches.
+    /// DEBUG: assigns a random sex to a differentiated clone (mirrors Reproduce()'s offspring-sex
+    /// assignment, which DebugBulkUpPopulation's clones bypass since they aren't born via Reproduce).
+    public void DebugAssignRandomSex()
+    {
+        if (IsDifferentiated) Sex = Random.value < 0.5f ? BiologicalSex.Male : BiologicalSex.Female;
+    }
+
+    public void DebugRelocateToMatchingMedium()
+    {
+        var fluid = FluidDynamicsManager.Instance;
+        if (fluid == null || _spawner == null) return;
+        for (int i = 0; i < 24; i++)
+        {
+            Vector3 candidate = SphereSurface.RandomPointOnSphere(planetCenter, planetRadius);
+            bool submerged = fluid.IsSubmerged(candidate);
+            if (submerged == _isAquatic) { transform.position = candidate; AlignToSurface(); return; }
+        }
+        // Fallback: no matching point found in the sample (e.g. an all-ocean or all-dry world) — leave
+        // the agent where it is; the ordinary medium-mismatch pressure will apply as normal thereafter.
+    }
+
+    /// ReturnToSea gene: a rarer reversal — a terrestrial lineage re-adapts to an aquatic existence
+    /// (real precedent: cetaceans, pinnipeds, sea snakes). Flips habitat back and moisture preference
+    /// wet-favoring.
+    public void ReturnToSea()
+    {
+        if (_isAquatic) return;
+        _isAquatic = true;
+        moisturePreference = Mathf.Clamp(PopulationStats.SampleDimension(85f, 10f), 0f, 100f); // wet-favoring
+        LocomotionMedium = HasMotility ? LocomotionMedium.Aquatic : LocomotionMedium.Terrestrial;
+        AcquiredGenes.Add("ReturnToSea");
+        Debug.Log($"[Habitat] {name} returned to the sea (moisturePref→{moisturePreference:F0}).");
     }
 
     /// e1_motility_emergence gene: organism develops directed locomotion (flagellar/ciliary
@@ -1720,6 +3055,7 @@ public class AgentController : MonoBehaviour
         HasMotility = true;
         LocomotionMedium = _isAquatic ? LocomotionMedium.Aquatic : LocomotionMedium.Terrestrial;
         AcquiredGenes.Add("MotilityEmergence");
+        ApplyMorphology(); // sessile radial blob → motile bilaterian with a tail
         Debug.Log($"[Motility] {name} developed directed locomotion.");
     }
 
@@ -1758,8 +3094,12 @@ public class AgentController : MonoBehaviour
     {
         Metabolism = MetabolismType.Phototrophic;
         _solarEnergy = _chemEnergy; // carry over accumulated reserves
+        // Carry over the lineage's enzymatic efficiency rather than rolling a fresh (much lower)
+        // value — the underlying protein machinery doesn't reset just because the energy source
+        // changed. Clamp to the photo ceiling in case an outlier chemo efficiency exceeds it.
+        PhotoEfficiency = Mathf.Min(ChemoEfficiency, PhotoEfficiencyCeiling);
         AcquiredGenes.Add("PhotosynthesisEmergence");
-        Debug.Log($"[Metabolism] {name} evolved photosynthesis.");
+        Debug.Log($"[Metabolism] {name} evolved photosynthesis (photoEff={PhotoEfficiency:F3} carried from chemoEff).");
     }
 
     /// Kingdom Fork gene choice: stay as an autotroph (chemosynthetic or phototrophic).
@@ -1787,27 +3127,156 @@ public class AgentController : MonoBehaviour
 
     // ── Era 1 trait setters ───────────────────────────────────────────────────
 
-    public void SetManipulation(ManipulationLevel level) => Manipulation = level;
+    /// ThermalToleranceExpansion gene: widen the survivable temperature band. Raises hardiness
+    /// (which broadens the climate-mismatch tolerance band in GetClimateStarvationMultiplier) and
+    /// thermal-cycle tolerance. Gene ID is registered by GeneEvolutionManager, not here.
+    public void ExpandThermalTolerance()
+    {
+        SetTraits(visionTrait, speedTrait, strengthTrait,
+            Mathf.Min(hardinessTrait + 12f, 100f), temperaturePreference, moisturePreference);
+        thermalCycleTolerance = Mathf.Min(thermalCycleTolerance + 15f, 100f);
+        Debug.Log($"[Biochemistry] {name} broadened thermal tolerance (hardiness→{hardinessTrait:F0}).");
+    }
+
+    public void SetManipulation(ManipulationLevel level) { Manipulation = level; ApplyMorphology(); RecordHistory($"Manipulation → {level}"); }
     public void SetSociality(SocialityBaseline level)    => Sociality = level;
     public void SetNeuralComplexity(NeuralComplexityStage stage) => NeuralComplexity = stage;
-    public void SetBodyPlan(BodyPlanType plan)  => BodyPlan = plan;
+    public void SetBodyPlan(BodyPlanType plan)  { BodyPlan = plan; ApplyMorphology(); RecordHistory($"Structural support → {plan}"); }
     public void SetGermLayers()                => HasGermLayers = true;
     public void SetAnoxicRefuge()              => IsAnoxicRefugeLineage = true;
+
+    /// appearance-generation-spec §3.4: records a historical-gallery snapshot for the player's own
+    /// lineage only (PlayerLineageHistory itself no-ops for any other community). Called from each
+    /// Era 1 axis setter below, not from the periodic network-foreshadow re-check in
+    /// UpdatePressureVariables — that one is gradual drift, not a discrete "major event."
+    private void RecordHistory(string eventLabel) => PlayerLineageHistory.RecordSnapshot(this, eventLabel);
+
+    // ── appearance-generation-spec §2.2/§2.8 remaining-axis setters ──────────────────────────
+    public void SetSegmentation(SegmentationType s) { Segmentation = s; ApplyMorphology(); RecordHistory($"Segmentation → {s}"); }
+    public void SetPrimarySense(SensoryModality m)  { PrimarySense = m; _sensesAcquired.Add(m); RecordHistory($"Primary sense → {m}"); }
+    public void SetFeedingApparatus(FeedingApparatus f) { Feeding = f; RecordHistory($"Feeding apparatus → {f}"); }
+    public void SetIntegument(IntegumentType t)     { Integument = t; ApplyMorphology(); RecordHistory($"Integument → {t}"); }
+    /// §2.8 e1_limb_differentiation: splits a previously-undifferentiated appendage budget into
+    /// dedicated locomotor vs. manipulator pairs. Before this fires, ManipulatorPairs stays 0 and
+    /// tool_ceiling (descriptor-derived) stays false even at high Manipulation tiers.
+    public void SetLimbDifferentiation(int locomotorPairs, int manipulatorPairs)
+    {
+        LocomotorPairs = locomotorPairs;
+        ManipulatorPairs = manipulatorPairs;
+        RecordHistory($"Limb differentiation → {locomotorPairs} locomotor / {manipulatorPairs} manipulator pairs");
+    }
+    public void SetVocalApparatus() { VocalApparatus = true; RecordHistory("Vocal apparatus emerged"); }
+    public void SetColonialModular() { IsColonialModular = true; ApplyMorphology(); RecordHistory("Colonial-modular symmetry emerged"); }
+    public void SetBiradial()        { IsBiradial = true; ApplyMorphology(); RecordHistory("Biradial symmetry emerged"); }
+    /// How many distinct sensory modalities (beyond the default Chemosensory) this lineage has
+    /// acquired — the eligibility test for e1_multimodal_sensory_integration.
+    public int AcquiredSenseCount => _sensesAcquired.Count;
+
+    // NOTE: the old single-swap AlternativeRespirationPathway gene/method was superseded by
+    // SpecializeAnaerobic()/BecomeAerobic() above (respiration-evolutionary-sequence-fix-spec) — a
+    // proper multi-way OR-gate branch plus a late atmosphere-gated aerobic unlock, rather than one
+    // hardcoded swap target.
 
     /// Reproductive Strategy Shift gene choice: remain Asexual (the current default -
     /// Reproduce() clones a single parent with mutation drift, no functional change).
     public void BecomeAsexual()
     {
         IsSexual = false;
+        AcquiredGenes.Add("ReproductiveStrategyShift");
     }
 
-    /// Reproductive Strategy Shift gene choice: shift to Sexual reproduction. Reproduce()
-    /// now requires finding an opposite-sex IsSexual mate in range and blends both parents'
-    /// traits (see FindMateInRange / Reproduce).
+    /// Sexual DIFFERENTIATION event: the lineage splits into separate sexes. This organism becomes
+    /// Male or Female (50/50); its offspring inherit differentiation and are likewise 50/50. It does
+    /// NOT yet reproduce sexually — that's the later ReproductiveStrategyShift event (BecomeSexual),
+    /// which requires differentiation first. Seeds a local pool of differentiated both-sex conspecifics
+    /// so a viable breeding population already exists by the time sexual reproduction unlocks.
+    public void DifferentiateSex()
+    {
+        AcquiredGenes.Add("SexualDifferentiation");
+        if (IsDifferentiated) return;
+        IsDifferentiated = true;
+        Sex = Random.value < 0.5f ? BiologicalSex.Male : BiologicalSex.Female;
+        Debug.Log($"[Reproduction] {name} sexually differentiated (sex={Sex}).");
+        SeedLocalDifferentiationPool();
+    }
+
+    /// Seeds nearby same-community members as differentiated, with alternating sexes, so both sexes
+    /// are present locally — the differentiation-stage analogue of SeedLocalBreedingPool.
+    private void SeedLocalDifferentiationPool()
+    {
+        if (_spawner == null) return;
+        float radius = Mathf.Max(senseRadius * 3f, 4f);
+        int converted = 0;
+        BiologicalSex nextSex = Sex == BiologicalSex.Female ? BiologicalSex.Male : BiologicalSex.Female;
+        foreach (var other in _spawner.ActiveAgents)
+        {
+            if (converted >= 4) break;
+            if (other == null || other == this) continue;
+            if (other.communityId != communityId || other.IsDifferentiated) continue;
+            float dist = SphereSurface.SurfaceDistance(transform.position, other.transform.position, planetCenter, planetRadius);
+            if (dist > radius) continue;
+            other.AdoptDifferentiationWithSex(nextSex);
+            nextSex = nextSex == BiologicalSex.Male ? BiologicalSex.Female : BiologicalSex.Male;
+            converted++;
+        }
+    }
+
+    /// Differentiates this agent with a specified sex — used to seed a local differentiation pool.
+    public void AdoptDifferentiationWithSex(BiologicalSex sex)
+    {
+        AcquiredGenes.Add("SexualDifferentiation");
+        if (IsDifferentiated) return;
+        IsDifferentiated = true;
+        Sex = sex;
+    }
+
+    /// Reproductive Strategy Shift gene choice: adopt Sexual REPRODUCTION. Requires the lineage to be
+    /// sexually DIFFERENTIATED first (guarded). Reproduce() then requires finding an opposite-sex
+    /// IsSexual mate in range and blends both parents' traits (see FindMateInRange / Reproduce).
     public void BecomeSexual()
     {
+        if (IsSexual) return;
+        if (!IsDifferentiated) DifferentiateSex(); // safety: sexual reproduction presupposes separate sexes
         IsSexual = true;
-        Sex = Random.value < 0.5f ? BiologicalSex.Male : BiologicalSex.Female;
+        AcquiredGenes.Add("ReproductiveStrategyShift");
+        Debug.Log($"[Reproduction] {name} adopted sexual reproduction (sex={Sex}).");
+        SeedLocalBreedingPool();
+    }
+
+    /// Converts a handful of nearby same-community members to sexual reproduction (with the opposite
+    /// sex seeded in) so a viable local breeding POOL forms, rather than a single sexual individual
+    /// stranded with no possible partner. Sexual reproduction can't bootstrap from one scattered
+    /// adopter (an Allee-effect dead-end) — a founder population needs both sexes present locally.
+    private void SeedLocalBreedingPool()
+    {
+        if (_spawner == null) return;
+        float radius = Mathf.Max(senseRadius * 3f, 4f);
+        int converted = 0;
+        BiologicalSex nextSex = Sex == BiologicalSex.Female ? BiologicalSex.Male : BiologicalSex.Female;
+        foreach (var other in _spawner.ActiveAgents)
+        {
+            if (converted >= 4) break;
+            if (other == null || other == this) continue;
+            if (other.communityId != communityId || other.IsSexual) continue;
+            float dist = SphereSurface.SurfaceDistance(transform.position, other.transform.position, planetCenter, planetRadius);
+            if (dist > radius) continue;
+            other.AdoptSexualWithSex(nextSex);
+            nextSex = nextSex == BiologicalSex.Male ? BiologicalSex.Female : BiologicalSex.Male; // alternate so both sexes appear
+            converted++;
+        }
+        if (converted > 0)
+            Debug.Log($"[Reproduction] {name} seeded a local breeding pool ({converted} conspecifics turned sexual).");
+    }
+
+    /// Turns this agent sexual with a specified biological sex — used to seed a local breeding pool.
+    public void AdoptSexualWithSex(BiologicalSex sex)
+    {
+        if (IsSexual) return;
+        IsDifferentiated = true;              // sexual reproduction presupposes differentiation
+        IsSexual = true;
+        Sex = sex;
+        AcquiredGenes.Add("SexualDifferentiation");
+        AcquiredGenes.Add("ReproductiveStrategyShift");
     }
 
     /// SequentialHermaphroditism gene: organism can switch sex in response to local
@@ -1839,6 +3308,32 @@ public class AgentController : MonoBehaviour
         if (sameCount + oppositeCount == 0) return 1f; // isolated — maximum imbalance
         return (float)sameCount / (sameCount + oppositeCount);
     }
+
+    /// Local male fraction among nearby DIFFERENTIATED same-community members, including self
+    /// (0 = all female, 1 = all male, 0.5 = balanced). Returns 0.5 if the local sex is undefined.
+    /// Drives frequency-dependent sex determination at birth (see Reproduce).
+    private float LocalMaleFraction()
+    {
+        if (_spawner == null) return 0.5f;
+        int male = Sex == BiologicalSex.Male ? 1 : 0;      // count self
+        int female = Sex == BiologicalSex.Female ? 1 : 0;
+        float searchR = senseRadius * 3f;
+        foreach (var other in _spawner.ActiveAgents)
+        {
+            if (other == null || other == this || !other.IsDifferentiated) continue;
+            if (other.communityId != communityId) continue;
+            float dist = SphereSurface.SurfaceDistance(transform.position, other.transform.position, planetCenter, planetRadius);
+            if (dist > searchR) continue;
+            if (other.Sex == BiologicalSex.Male) male++;
+            else if (other.Sex == BiologicalSex.Female) female++;
+        }
+        int total = male + female;
+        return total == 0 ? 0.5f : (float)male / total;
+    }
+    // How strongly a local sex imbalance biases offspring toward the rarer sex. 0 = always 50/50;
+    // 1 = fully skewed toward the minority in an all-one-sex neighborhood. 0.8 self-corrects firmly
+    // but keeps some randomness, so the ratio glides back to ~50/50 rather than snapping. TUNABLE.
+    private const float SexRatioCorrectionStrength = 0.8f;
 
     /// Periodic sex-switch check for organisms with CanChangeSex. Runs every 8-20 real
     /// seconds. If the local sex ratio is strongly skewed toward the organism's current sex
@@ -1874,6 +3369,12 @@ public class AgentController : MonoBehaviour
         foreach (var gene in parent.AcquiredGenes) AcquiredGenes.Add(gene);
         Kingdom = parent.Kingdom;
         IsSexual = parent.IsSexual;
+        IsDifferentiated = parent.IsDifferentiated; // sex differentiation is heritable; Sex re-rolled in Reproduce
+        _isAquatic = parent._isAquatic; // habitat (land/sea) is heritable — set by ColonizeLand/ReturnToSea
+
+        // Inherit the parent's morphology seed so offspring resemble their parents, then refresh the
+        // mesh from this child's inherited state (motility/appendages/body-plan copied just below).
+        _morphSeed = parent._morphSeed;
 
         // Atmospheric adaptation is inherited from the parent's locked-in mix, NOT
         // resampled from the current atmosphere - only AttemptAtmosphericSpeciation
@@ -1884,19 +3385,24 @@ public class AgentController : MonoBehaviour
         CanChangeSex = parent.CanChangeSex;
         // Sex itself is re-rolled at birth (see Reproduce) — only the capability is inherited.
         _idealGasMix = new Dictionary<string, float>(parent._idealGasMix);
-        gasTolerance = parent.gasTolerance;
+        // gasTolerance: primary drift happens at speciation; small per-generation nudge lets
+        // lineages track slow atmospheric change without waiting for a speciation event.
+        gasTolerance = Mathf.Clamp(PopulationStats.SampleDimension(parent.gasTolerance, 1.25f), 0f, 100f);
         AtmoLineage  = parent.AtmoLineage;
 
-        // Environmental tolerances compound across generations — offspring inherit the
-        // parent's adapted value rather than re-rolling from the spawn range.
-        uvTolerance           = parent.uvTolerance;
-        pressureTolerance     = parent.pressureTolerance;
-        thermalCycleTolerance = parent.thermalCycleTolerance;
+        // Environmental tolerances drift each generation so lineages can adapt to sustained
+        // pressure. Half the standard trait stddev keeps drift slower than the primary traits
+        // but fast enough to track a gradually changing environment.
+        const float tolDrift = 2.5f;
+        uvTolerance           = Mathf.Clamp(PopulationStats.SampleDimension(parent.uvTolerance,           tolDrift), 0f, 100f);
+        pressureTolerance     = Mathf.Clamp(PopulationStats.SampleDimension(parent.pressureTolerance,     tolDrift), 0f, 100f);
+        thermalCycleTolerance = Mathf.Clamp(PopulationStats.SampleDimension(parent.thermalCycleTolerance, tolDrift), 0f, 100f);
         pressurePreference    = parent.pressurePreference;
 
         // Survival needs are lineage-locked — offspring breathe the same gas and need
         // the same liquid chemistry as the parent line they descended from.
         _breathedGasName       = parent._breathedGasName;
+        _expelledGasName       = parent._expelledGasName;
         _minBreathableFraction = parent._minBreathableFraction;
         _requiredLiquidKind    = parent._requiredLiquidKind;
 
@@ -1909,15 +3415,41 @@ public class AgentController : MonoBehaviour
         HasGermLayers     = parent.HasGermLayers;
         IsAnoxicRefugeLineage = parent.IsAnoxicRefugeLineage;
 
-        // Efficiency traits are Tier 1 lineage traits — inherited directly.
-        // SI drift (task #16) will mutate them at speciation events.
-        PhotoEfficiency          = parent.PhotoEfficiency;
-        ChemoEfficiency          = parent.ChemoEfficiency;
-        AssimilationEfficiency   = parent.AssimilationEfficiency;
+        // appearance-generation-spec §2.2/§2.8 remaining axes — inherited, not re-rolled.
+        Segmentation      = parent.Segmentation;
+        PrimarySense      = parent.PrimarySense;
+        _sensesAcquired.Clear();
+        foreach (var s in parent._sensesAcquired) _sensesAcquired.Add(s);
+        Feeding           = parent.Feeding;
+        Integument        = parent.Integument;
+        LocomotorPairs    = parent.LocomotorPairs;
+        ManipulatorPairs  = parent.ManipulatorPairs;
+        VocalApparatus    = parent.VocalApparatus;
+        IsColonialModular = parent.IsColonialModular;
+        IsBiradial        = parent.IsBiradial;
 
         if (_stressRegistered) PopulationStats.UnregisterStressTolerance(stressTolerance);
-        stressTolerance = parent.stressTolerance;
+        stressTolerance = Mathf.Clamp(PopulationStats.SampleDimension(parent.stressTolerance, 2.5f), 0f, 100f);
         if (_stressRegistered) PopulationStats.RegisterStressTolerance(stressTolerance);
+
+        // Efficiency traits drift slowly each generation in addition to SI-event jumps,
+        // so lineages can grind toward better metabolic yield under sustained energy pressure.
+        PhotoEfficiency        = Mathf.Clamp(PopulationStats.SampleDimension(parent.PhotoEfficiency,        0.001f), 0f, PhotoEfficiencyCeiling);
+        ChemoEfficiency        = Mathf.Clamp(PopulationStats.SampleDimension(parent.ChemoEfficiency,        0.02f),  0f, ChemoEfficiencyCeiling);
+        AssimilationEfficiency = Mathf.Clamp(PopulationStats.SampleDimension(parent.AssimilationEfficiency, 0.02f),  AssimEfficiencyMin, AssimEfficiencyMax);
+
+        // Reproduction rate: faster reproduction is the prey-side response to predation pressure.
+        // Drifts ±1 with 15% probability per generation, floored at 1.
+        eatsToReproduce = Mathf.Max(1, parent.eatsToReproduce + (Random.value < 0.15f ? (Random.value < 0.5f ? -1 : 1) : 0));
+
+        // era3-primitives-spec §2: real evolvable traits, mutating at reproduction like any other —
+        // NOT reset per offspring, drifted from the parent so selection can actually act on them.
+        contestPropensity = Mathf.Clamp(PopulationStats.SampleDimension(parent.contestPropensity, 5f), 0f, 100f);
+        boldness          = Mathf.Clamp(PopulationStats.SampleDimension(parent.boldness,          5f), 0f, 100f);
+
+        // Rebuild the body now that all morphology-driving state (motility, appendages, body plan,
+        // inherited seed) is in place, so the offspring's shape matches its inherited lineage.
+        ApplyMorphology();
     }
 
     /// Asexual when mate == null (clones this parent's traits with mutation drift, exactly
@@ -1928,9 +3460,30 @@ public class AgentController : MonoBehaviour
     private void Reproduce(AgentController mate)
     {
         if (_spawner == null) return;
-        if (EraManager.Instance != null && _spawner.ActiveAgents.Count >= EraManager.Instance.MaxPopulation) return;
 
-        Vector3 offspringPos = SphereSurface.MoveAlongSurface(transform.position, _heading, offspringSpawnOffset, planetCenter, planetRadius);
+        // Once this community is CIVILIZED (owns at least one Era 3 settlement), a birth becomes
+        // abstract settlement population growth instead of a new individually-simulated organism.
+        // This is the actual, permanent Era 3 lag fix — settlement absorption alone (a periodic,
+        // radius-limited tick) can never keep pace with unthrottled reproduction across a whole living
+        // population; population kept exploding into thousands of live agents even after founding.
+        // The parent reproducing here is itself still a living straggler (not yet absorbed) — only
+        // the OFFSPRING is abstracted, so this doesn't retroactively remove anyone, just stops the
+        // bleeding going forward.
+        if (Era3Manager.Instance != null && Era3Manager.Instance.IsActive
+            && Era3Manager.Instance.CivHasSettlement(communityId))
+        {
+            Era3Manager.Instance.RegisterAbstractBirth(communityId, transform.localScale.x, Metabolism, Backbone, PhotoEfficiency, ChemoEfficiency);
+            return;
+        }
+
+        if (_spawner.ActiveAgents.Count >= AgentSpawner.MaxIndividualAgents) return; // safety valve, see TryReproduce
+
+        // Offspring SPLITS OFF the parent's body — it emerges right at the parent and buds off
+        // just behind it (one body-length back along the reverse of the heading), so a birth reads as
+        // fission from the parent, not a child materializing a couple units away in open space. The
+        // per-frame separation impulse then gently eases the two apart over the next moments.
+        float budOffset = Mathf.Max(transform.localScale.x, 0.08f);
+        Vector3 offspringPos = SphereSurface.MoveAlongSurface(transform.position, -_heading, budOffset, planetCenter, planetRadius);
 
         float baseVision = visionTrait;
         float baseSpeed = speedTrait;
@@ -1964,30 +3517,43 @@ public class AgentController : MonoBehaviour
 
         AgentController child = _spawner.SpawnAgent(childVision, childSpeed, childStrength, childHardiness, childTempPref, childMoisturePref, offspringPos, communityId, lineageColor);
         child.InheritGenesFrom(this);
+        // Per-reproduction mutation: this offspring may ORIGINATE a new trait (gene-adoption spec §B),
+        // staggering adoption across lineages rather than a synchronized population-wide flip.
+        GeneEvolutionManager.RollReproductionMutations(child);
         // Assign offspring sex randomly if sexual — sex is not inherited, just the capability.
         // If local imbalance is extreme and the parent can change sex, bias offspring toward
         // the rarer sex (density-dependent sex determination, as in some real reptiles/fish).
-        if (child.IsSexual)
+        // A DIFFERENTIATED lineage assigns its offspring a sex, whether or not it yet reproduces
+        // sexually — differentiation is the trait that makes offspring male/female. The ratio is
+        // FREQUENCY-DEPENDENT (Fisher's principle): each birth is biased toward the locally rarer sex
+        // in proportion to the skew, so a transient shortage of one sex raises that sex's birth odds
+        // and the population glides back toward ~50/50, then reverts to 50/50 at balance. This is the
+        // realistic, always-on correction; the parthenogenesis fallback in TryReproduce is only the
+        // extreme safety net for when no mate exists at all.
+        if (child.IsDifferentiated)
         {
-            float imbalance = LocalSexImbalance();
-            float maleBias = (CanChangeSex && imbalance > 0.6f)
-                ? (Sex == BiologicalSex.Male ? 0.25f : 0.75f) // bias toward rarer sex
-                : 0.5f;                                         // 50:50 default
+            float maleFraction = LocalMaleFraction();                                  // 0.5 = balanced
+            float maleBias = Mathf.Clamp01(0.5f + (0.5f - maleFraction) * SexRatioCorrectionStrength);
             child.Sex = Random.value < maleBias ? BiologicalSex.Male : BiologicalSex.Female;
         }
     }
 
-    /// Returns the nearest OTHER IsSexual agent within sense range that this agent could
-    /// reproduce with - same community only (lineage-compatible), excluding self. Mirrors
-    /// FindPreyInRange's sense-range search pattern.
+    /// Returns an eligible mate this agent is actually TOUCHING — same community, opposite sex,
+    /// within body-contact range (not merely sense range). Mating requires physical contact: an
+    /// organism must reach and touch a partner, not conceive from across its visual field. The
+    /// mate-seeking steering in UpdateProducer/UpdateConsumer keeps an agent closing on the nearest
+    /// mate precisely while this returns null, so the two approach until they meet. Live (not sense-
+    /// cached) so contact resolves against current positions — no conceiving from a stale snapshot.
     private AgentController FindMateInRange()
     {
         if (_spawner == null) return null;
 
         AgentController nearest = null;
-        float nearestDist = senseRadius;
+        float contact = MatingContactRadius;
+        float nearestDist = contact;
 
-        foreach (var other in _spawner.ActiveAgents)
+        _spawner.QueryNearby(transform.position, contact, _queryBuffer);
+        foreach (var other in _queryBuffer)
         {
             if (other == null || other == this) continue;
             if (!other.IsSexual) continue;
@@ -2006,6 +3572,30 @@ public class AgentController : MonoBehaviour
         return nearest;
     }
 
+    /// Returns the nearest eligible mate anywhere in the population (ignores sense radius).
+    /// Used for movement targeting only — actual mating still requires being within sense range.
+    private AgentController FindNearestMate()
+    {
+        if (_spawner == null) return null;
+        if (Sex == BiologicalSex.Asexual) return null;
+        if (_mateCycle == _senseCycle) return ValidCached(_cachedMate); // memoized: this was an O(n) full scan every frame
+
+        AgentController nearest = null;
+        float nearestDist = float.MaxValue;
+
+        foreach (var other in _spawner.ActiveAgents)
+        {
+            if (other == null || other == this) continue;
+            if (!other.IsSexual) continue;
+            if (other.communityId != communityId) continue;
+            if (other.Sex == BiologicalSex.Asexual || other.Sex == Sex) continue;
+            float dist = SphereSurface.SurfaceDistance(transform.position, other.transform.position, planetCenter, planetRadius);
+            if (dist < nearestDist) { nearestDist = dist; nearest = other; }
+        }
+        _mateCycle = _senseCycle; _cachedMate = nearest;
+        return nearest;
+    }
+
     /// Returns the nearest huntable agent within sense range.
     ///
     /// Herbivory (target is a producer): any community, including own — eating plant-equivalents
@@ -2019,11 +3609,13 @@ public class AgentController : MonoBehaviour
     private AgentController FindPreyInRange()
     {
         if (_spawner == null) return null;
+        if (_preyCycle == _senseCycle) return ValidCached(_cachedPrey); // memoized this sense cycle
 
         AgentController nearest = null;
         float nearestDist = senseRadius;
 
-        foreach (var other in _spawner.ActiveAgents)
+        _spawner.QueryNearby(transform.position, senseRadius, _queryBuffer);
+        foreach (var other in _queryBuffer)
         {
             if (other == null || other == this) continue;
             // Producers: targetable for herbivory regardless of community.
@@ -2037,6 +3629,7 @@ public class AgentController : MonoBehaviour
                 nearest = other;
             }
         }
+        _preyCycle = _senseCycle; _cachedPrey = nearest;
         return nearest;
     }
 
@@ -2163,10 +3756,12 @@ public class AgentController : MonoBehaviour
     private AgentController FindNearestPredatorInRange()
     {
         if (_spawner == null) return null;
+        if (_threatCycle == _senseCycle) return ValidCached(_cachedThreat); // memoized this sense cycle
         float threatRange = senseRadius * 1.5f;
         AgentController nearest = null;
         float nearestDist = threatRange;
-        foreach (var other in _spawner.ActiveAgents)
+        _spawner.QueryNearby(transform.position, threatRange, _queryBuffer);
+        foreach (var other in _queryBuffer)
         {
             if (other == null || other == this) continue;
             if (other.Metabolism != MetabolismType.Heterotrophic || !other.HasMotility) continue;
@@ -2174,6 +3769,7 @@ public class AgentController : MonoBehaviour
             float dist = SphereSurface.SurfaceDistance(transform.position, other.transform.position, planetCenter, planetRadius);
             if (dist < nearestDist) { nearestDist = dist; nearest = other; }
         }
+        _threatCycle = _senseCycle; _cachedThreat = nearest;
         return nearest;
     }
 
@@ -2217,7 +3813,12 @@ public class AgentController : MonoBehaviour
         float dist = SphereSurface.SurfaceDistance(transform.position, _fleeTarget.transform.position, planetCenter, planetRadius);
         float proximityUrgency = Mathf.Clamp01(1f - dist / (senseRadius * 1.5f));
         float strengthDisadvantage = Mathf.Clamp01(0.5f + (_fleeTarget.strengthTrait - strengthTrait) / 100f);
-        return proximityUrgency * strengthDisadvantage;
+        // era3-primitives-spec §2.2: boldness lowers flee eagerness — a bold organism keeps foraging
+        // longer in an exposed/risky patch instead of fleeing early (more time feeding, more time
+        // exposed); a shy one flees sooner. This is the real predation-risk side of the trade — bold
+        // organisms genuinely die to predation more often, not just cosmetically "act brave."
+        float boldnessDamping = Mathf.Lerp(1.25f, 0.7f, Mathf.Clamp01(boldness / 100f));
+        return proximityUrgency * strengthDisadvantage * boldnessDamping;
     }
 
     /// Combat resolution when a predator tries to eat this organism.
@@ -2225,19 +3826,29 @@ public class AgentController : MonoBehaviour
     /// Strong prey can counter-kill a weak predator.
     public bool ResolvePredatorAttack(AgentController attacker)
     {
-        float diff = attacker.strengthTrait - strengthTrait; // positive = attacker stronger
+        // Effective defense folds hardiness into strength: a tough (high-hardiness) organism is
+        // harder to bring down even at equal raw strength, giving hardiness a real predation role.
+        float preyDefense = strengthTrait + hardinessTrait * 0.5f;
 
-        // Very strong prey can fight back and kill the attacker.
-        if (strengthTrait > attacker.strengthTrait + 40f)
+        // Body SIZE matters too: a larger organism is harder to subdue and a larger attacker hits
+        // harder. Fold the mass ratio into the balance (~±30 at a 2× size difference, comparable in
+        // weight to a large strength gap) so predation is a fight over size AND strength, not strength
+        // alone — a big, dull-witted grazer can shrug off a small sharp predator, and vice versa.
+        float sizeAdvantage = Mathf.Clamp((attacker._currentMass / Mathf.Max(_currentMass, 0.001f)) - 1f, -1f, 1f) * 30f;
+        float diff = (attacker.strengthTrait - preyDefense) + sizeAdvantage; // positive = attacker favored
+
+        // Very strong prey can fight back and kill the attacker (raw strength, counter-attack) — a
+        // decisive size edge counts toward that too (a much larger prey can turn on a small attacker).
+        if (strengthTrait + Mathf.Max(0f, -sizeAdvantage) > attacker.strengthTrait + 40f)
         {
             // Prey kills attacker — role reversal.
-            attacker.Die();
+            attacker.Die(DeathCause.Unknown);
             Debug.Log($"[Combat] {name} (str={strengthTrait:F0}) killed attacker {attacker.name} (str={attacker.strengthTrait:F0}).");
             return false; // prey survives
         }
 
-        // Escape probability: 50% at equal strength, 0% when attacker is 50+ stronger,
-        // 100% when prey is 50+ stronger (but below the counter-kill threshold).
+        // Escape probability: 50% when evenly matched (attacker strength ≈ prey defense), 0% when
+        // attacker is 50+ ahead, 100% when prey defense is 50+ ahead (but below the counter-kill line).
         float escapeProbability = Mathf.Clamp01(0.5f - diff / 100f);
 
         if (Random.value < escapeProbability)
